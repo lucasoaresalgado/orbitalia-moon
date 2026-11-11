@@ -1,0 +1,31 @@
+# ~/.config/systemd/user/miniasys-worker.service
+# The worker: queue consumer, agent loop, sandboxes, schedules (scope §5).
+# Secrets come in as systemd credentials, never from the repository.
+[Unit]
+Description=Miniasys worker
+After=network-online.target podman.socket
+Wants=podman.socket
+
+[Service]
+Type=simple
+WorkingDirectory=%h/miniasys/apps/worker
+EnvironmentFile=%h/miniasys/.env
+LoadCredential=anthropic:%h/.config/miniasys/secrets/anthropic
+LoadCredential=pg_password:%h/.config/miniasys/secrets/pg_password
+LoadCredential=master_key:%h/.config/miniasys/secrets/master_key
+LoadCredential=github-app.pem:%h/.config/miniasys/secrets/github-app.pem
+Environment=ANTHROPIC_API_KEY_FILE=%d/anthropic
+Environment=DATABASE_PASSWORD_FILE=%d/pg_password
+Environment=MASTER_KEY_FILE=%d/master_key
+Environment=GITHUB_APP_PRIVATE_KEY_FILE=%d/github-app.pem
+Environment=PODMAN_SOCKET=%t/podman/podman.sock
+Environment=NODE_ENV=production
+ExecStart=%h/miniasys/node_modules/.bin/tsx src/main.ts
+Restart=on-failure
+RestartSec=5
+MemoryMax=600M
+# leases make a restart safe: runs resume from their last checkpoint
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

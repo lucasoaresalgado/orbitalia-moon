@@ -1,0 +1,29 @@
+# ~/.config/systemd/user/miniasys-web.service
+# The web app (SvelteKit, adapter-node), bound to 127.0.0.1:3000.
+# Build first: pnpm --filter @miniasys/web build
+[Unit]
+Description=Miniasys web
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/miniasys/apps/web
+EnvironmentFile=%h/miniasys/.env
+LoadCredential=pg_password:%h/.config/miniasys/secrets/pg_password
+LoadCredential=master_key:%h/.config/miniasys/secrets/master_key
+LoadCredential=anthropic:%h/.config/miniasys/secrets/anthropic
+Environment=DATABASE_PASSWORD_FILE=%d/pg_password
+Environment=MASTER_KEY_FILE=%d/master_key
+Environment=ANTHROPIC_API_KEY_FILE=%d/anthropic
+Environment=HOST=127.0.0.1
+Environment=PORT=3000
+Environment=ORIGIN=http://127.0.0.1:3000
+Environment=MINIASYS_ROOT=%h/miniasys
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node build/index.js
+Restart=on-failure
+RestartSec=5
+MemoryMax=400M
+
+[Install]
+WantedBy=default.target

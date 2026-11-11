@@ -1,0 +1,19 @@
+# ~/.config/systemd/user/miniasys-colibri.service
+# Colibri: the local System One decision server on 127.0.0.1:8000 (scope §8.6).
+# Adjust ExecStart to how Colibri is installed; until it runs, decisions fall
+# back to Haiku automatically.
+[Unit]
+Description=Colibri (System One decisions)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/colibri serve --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=10
+# a capped footprint on a 16 GB laptop
+MemoryMax=3G
+CPUQuota=150%
+
+[Install]
+WantedBy=default.target

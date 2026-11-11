@@ -1,0 +1,13 @@
+node_modules/
+.svelte-kit/
+build/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+*:Zone.Identifier
+/data/
+/workspaces/
+/lakehouse/
+coverage/

@@ -1,0 +1,36 @@
+# Infrastructure only (scope §20): Postgres + pgvector and Ollama, bound to
+# 127.0.0.1. web, worker and Colibri run on the host as systemd user units.
+# Run: podman-compose -f infra/compose.yaml up -d
+# Before the first start on btrfs: mkdir -p ~/miniasys/data/pgdata && chattr +C ~/miniasys/data/pgdata
+# Pin the image tags once the setup works.
+services:
+  postgres:
+    image: docker.io/pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_DB: platform
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+    secrets: [pg_password]
+    volumes:
+      - ~/miniasys/data/pgdata:/var/lib/postgresql/data:Z
+    ports: ["127.0.0.1:5432:5432"]
+    deploy: { resources: { limits: { memory: 768m } } }
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d platform"]
+      interval: 10s
+      retries: 5
+    restart: unless-stopped
+
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    environment:
+      OLLAMA_KEEP_ALIVE: 10m
+    volumes:
+      - ~/miniasys/data/ollama:/root/.ollama:Z
+    ports: ["127.0.0.1:11434:11434"]
+    deploy: { resources: { limits: { memory: 2g } } }
+    restart: unless-stopped
+
+secrets:
+  pg_password:
+    file: ~/.config/miniasys/secrets/pg_password

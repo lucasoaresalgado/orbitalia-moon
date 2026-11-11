@@ -1,0 +1,180 @@
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+@import "tailwindcss";
+
+/* Design tokens (scope §18.2): dark by default, light available. Dense: 13 px base,
+   32–36 px rows, 1 px borders, 6 px corners on controls, 8 px on drawers. */
+@theme inline {
+  --font-sans: "Inter Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-fg: var(--text-primary);
+  --color-fg-2: var(--text-secondary);
+  --color-muted: var(--text-muted);
+  --color-line: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-info: var(--info);
+  --color-opus: var(--opus);
+  --color-sonnet: var(--sonnet);
+  --color-haiku: var(--haiku);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+}
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #0f1115;
+  --surface-1: #15181e;
+  --surface-2: #1c2028;
+  --surface-3: #262b35;
+  --text-primary: #e6e8ec;
+  --text-secondary: #b3b8c3;
+  --text-muted: #7d8492;
+  --border: #2a2f3a;
+  --accent: #8b7cf6;
+  --accent-fg: #ffffff;
+  --ok: #3fb97b;
+  --warn: #e0a83a;
+  --bad: #ef6461;
+  --info: #5b9cf5;
+  --opus: #a78bfa;
+  --sonnet: #818cf8;
+  --haiku: #2dd4bf;
+  /* chart series (validated with the dataviz validator against this surface: CVD ΔE ≥ 9.4 all pairs).
+     The badge colors above are too close to each other to be chart series. */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --surface-0: #f6f7f9;
+  --surface-1: #ffffff;
+  --surface-2: #f0f2f5;
+  --surface-3: #e4e7ec;
+  --text-primary: #1b1f27;
+  --text-secondary: #3d4452;
+  --text-muted: #6b7280;
+  --border: #dde1e7;
+  --accent: #6d5ce8;
+  --accent-fg: #ffffff;
+  --ok: #1d8a57;
+  --warn: #a96b00;
+  --bad: #cc3b37;
+  --info: #2a6fd6;
+  --opus: #7c3aed;
+  --sonnet: #4f46e5;
+  --haiku: #0d9488;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+}
+
+html {
+  font-size: 13px;
+}
+body {
+  @apply bg-surface-0 text-fg font-sans antialiased;
+  font-feature-settings: "cv11", "ss01";
+}
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.mono {
+  @apply font-mono text-[12px];
+}
+
+/* one button set */
+.btn {
+  @apply inline-flex h-7 items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 text-[12.5px] text-fg hover:bg-surface-3 disabled:opacity-50;
+}
+.btn-primary {
+  @apply border-transparent bg-accent text-accent-fg hover:brightness-110;
+}
+.btn-danger {
+  @apply border-bad/40 text-bad hover:bg-bad/10;
+}
+.btn-ghost {
+  @apply border-transparent bg-transparent hover:bg-surface-2;
+}
+.input {
+  @apply h-7 w-full rounded-md border border-line bg-surface-1 px-2 text-[12.5px] text-fg outline-none placeholder:text-muted focus:border-accent;
+}
+textarea.input {
+  @apply h-auto py-1.5 leading-relaxed;
+}
+.label {
+  @apply mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted;
+}
+.panel {
+  @apply rounded-lg border border-line bg-surface-1;
+}
+.row {
+  @apply flex h-9 items-center gap-3 border-b border-line px-3 text-[12.5px] last:border-b-0 hover:bg-surface-2;
+}
+.tab {
+  @apply -mb-px border-b-2 border-transparent px-2.5 py-1.5 text-[12.5px] text-fg-2 hover:text-fg;
+}
+.tab-active {
+  @apply border-accent text-fg;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.prose-sm :where(p, ul, ol, pre) {
+  margin: 0.4em 0;
+}
+.prose-sm :where(ul) {
+  list-style: disc;
+  padding-left: 1.2em;
+}
+.prose-sm :where(ol) {
+  list-style: decimal;
+  padding-left: 1.2em;
+}
+.prose-sm :where(code) {
+  @apply rounded bg-surface-3 px-1 font-mono text-[12px];
+}
+.prose-sm :where(pre) {
+  @apply overflow-x-auto rounded-md bg-surface-0 p-2 font-mono text-[12px];
+}
+.prose-sm :where(pre code) {
+  background: none;
+  padding: 0;
+}
+.prose-sm :where(a) {
+  @apply text-accent underline;
+}
+.prose-sm :where(h1, h2, h3) {
+  @apply mt-2 font-semibold;
+}
+.prose-sm :where(table) {
+  @apply text-[12px];
+}
+.prose-sm :where(td, th) {
+  @apply border border-line px-1.5 py-0.5;
+}
+.pulse {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pulse {
+    animation: none;
+  }
+}

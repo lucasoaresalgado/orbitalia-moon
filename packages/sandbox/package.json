@@ -1,0 +1,19 @@
+{
+  "name": "@miniasys/sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc -p ."
+  },
+  "dependencies": {
+    "@miniasys/core": "workspace:^",
+    "dockerode": "^5.0.1"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^4.0.2"
+  }
+}

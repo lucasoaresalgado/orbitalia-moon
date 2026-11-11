@@ -1,0 +1,27 @@
+{
+  "name": "miniasys",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=22.17"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @miniasys/web --filter @miniasys/worker dev",
+    "build": "pnpm -r build",
+    "check": "pnpm -r check",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "pnpm --filter @miniasys/db generate",
+    "db:migrate": "pnpm --filter @miniasys/db migrate",
+    "db:seed": "pnpm --filter @miniasys/db seed",
+    "infra:up": "podman-compose -f infra/compose.yaml up -d",
+    "infra:down": "podman-compose -f infra/compose.yaml down"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

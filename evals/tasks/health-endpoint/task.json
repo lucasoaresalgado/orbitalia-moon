@@ -1,0 +1,7 @@
+{
+  "agent": "dev",
+  "title": "Add a /health endpoint",
+  "brief": "The Node HTTP server in server.js has no health check. Add GET /health that returns 200 with JSON {\"ok\": true}. Keep the existing routes working and add a test.",
+  "acceptance_criteria": ["GET /health returns 200 and {\"ok\": true}", "Existing tests still pass", "A test covers /health"],
+  "budget_usd": 0.5
+}
