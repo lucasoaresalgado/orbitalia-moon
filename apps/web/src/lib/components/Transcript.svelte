@@ -1,6 +1,5 @@
 <script lang="ts">
   // A run's transcript, replayed from its journal and followed live (topic run:<id>).
-  import { onMount } from "svelte";
   import { ChevronRight, Wrench, AlertTriangle, PauseCircle, Coins } from "@lucide/svelte";
   import Markdown from "./Markdown.svelte";
   import StatusBadge from "./StatusBadge.svelte";
@@ -12,23 +11,34 @@
   let { runId, compact = false }: { runId: string; compact?: boolean } = $props();
   let events = $state<Ev[]>([]);
   let last = 0;
+  let loading: Promise<void> | null = null;
 
-  async function more() {
-    const rows = await api<Ev[]>(`/api/runs/${runId}/events?after=${last}`);
-    if (rows.length) {
-      events = [...events, ...rows];
-      last = rows.at(-1)!.seq;
-    }
+  // several triggers (mount, live events) can ask at once: one request runs, the others wait for it
+  function more(): Promise<void> {
+    loading ??= (async () => {
+      try {
+        const forRun = runId;
+        const rows = await api<Ev[]>(`/api/runs/${forRun}/events?after=${last}`);
+        if (forRun !== runId) return;
+        const fresh = rows.filter((r) => r.seq > last);
+        if (fresh.length) {
+          events = [...events, ...fresh];
+          last = fresh.at(-1)!.seq;
+        }
+      } finally {
+        loading = null;
+      }
+    })();
+    return loading;
   }
-  onMount(() => {
-    void more();
-    return live([`run:${runId}`], () => void more());
-  });
   $effect(() => {
-    runId;
+    // a new run: start over, then follow it live
+    const id = runId;
     events = [];
     last = 0;
+    loading = null;
     void more();
+    return live([`run:${id}`], () => void more());
   });
 </script>
 

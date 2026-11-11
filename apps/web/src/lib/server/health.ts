@@ -48,10 +48,15 @@ export async function checks(): Promise<Check[]> {
     }),
     timed("Ollama", () => http(`${c.ollamaUrl}/api/tags`)),
     timed("Colibri", () => http(`${c.colibriUrl}/health`)),
-    timed("Podman", () => podmanPing(c.podmanSocket)),
+    timed(c.containerRuntime === "docker" ? "Docker" : "Podman", () => podmanPing(c.podmanSocket)),
     timed("Anthropic API", async () => {
       if (!c.anthropic.apiKey) throw new Error("API key not configured");
       return http("https://api.anthropic.com/v1/models").then(() => "reachable");
+    }),
+    timed("Claude subscription", async () => {
+      const [row] = await sql()<{ last_used_at: Date | null }[]>`SELECT last_used_at FROM secrets WHERE name = 'CLAUDE_CODE_OAUTH_TOKEN'`;
+      if (!row) throw new Error("not connected (Settings → Claude subscription)");
+      return row.last_used_at ? `connected · last used ${new Date(row.last_used_at).toLocaleString()}` : "connected · not used yet";
     }),
     timed("GitHub App", async () => {
       if (!c.github) throw new Error("not configured");

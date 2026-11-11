@@ -1,8 +1,11 @@
 <script lang="ts">
   import StatusBadge from "#lib/components/StatusBadge.svelte";
+  import BudgetUnitSwitch from "#lib/components/BudgetUnitSwitch.svelte";
   import { time } from "#lib/format.ts";
   let { data, form } = $props();
-  const sections = ["models", "prices", "budgets", "connections", "secrets", "sandbox", "schedules"];
+  const sections = ["models", "subscription", "prices", "budgets", "connections", "secrets", "sandbox", "schedules"];
+  const engineRoles: [keyof typeof data.engines, string][] = [["manager", "Manager (Iacy)"], ["worker", "Workers"], ["reviewer", "Reviewer"], ["brief_writer", "Brief writer"]];
+  const tokenFmt = (n: number | null | undefined) => (n == null ? "" : String(n));
   const roles: [keyof typeof data.models, string][] = [
     ["manager", "Manager (Iacy)"], ["brief_writer", "Brief writer"], ["worker_default", "Worker (cheap tier)"], ["worker_strong", "Worker (strong tier)"],
     ["reviewer", "Reviewer"], ["security", "Security"], ["decisions_fallback", "Decisions fallback"], ["colibri_decision_model", "Colibri decision model (empty: Haiku only)"],
@@ -16,6 +19,10 @@
     {#each sections as s}<a href="#{s}" class="block rounded px-2 py-1 text-fg-2 capitalize hover:bg-surface-2 hover:text-fg">{s}</a>{/each}
   </nav>
   <div class="max-w-3xl flex-1 space-y-8 p-6">
+    <div class="panel p-3">
+      <BudgetUnitSwitch unit={data.budgetUnit} />
+      <p class="mt-1.5 text-[12px] text-muted">Both are always recorded; this decides which one blocks a run. Limits for each are under <a class="text-accent" href="#budgets">Budgets</a>.</p>
+    </div>
     {#if form?.error}<p class="border-l-2 border-bad pl-2 text-bad">{form.error}</p>{/if}
     {#if form?.ok}<p class="border-l-2 border-ok pl-2 text-ok">Saved {form.ok}.</p>{/if}
 
@@ -31,6 +38,40 @@
           <div class="flex items-center gap-3"><label class="w-64 text-fg-2" for="m-{key}">{label}</label><input id="m-{key}" name={key} class="input mono" value={data.models[key] ?? ""} /></div>
         {/each}
         <button class="btn btn-primary">Save models</button>
+      </form>
+    </section>
+
+    <section id="subscription">
+      <h2 class="mb-2 text-[14px] font-semibold">Claude subscription <span class="text-[12px] font-normal text-muted">use your Pro/Max plan instead of API credits</span></h2>
+      <div class="panel space-y-3 p-3 text-[12.5px]">
+        <div class="flex items-center gap-2">
+          <StatusBadge status={data.subscription ? "ok" : "canceled"} compact />
+          {#if data.subscription}Connected{data.subscription.lastUsedAt ? ` · last used ${time(data.subscription.lastUsedAt)}` : " · not used yet"}{:else}Not connected{/if}
+          {#if data.subscription}<form method="POST" action="?/claudeDisconnect" class="ml-auto"><button class="btn btn-danger">Disconnect</button></form>{/if}
+        </div>
+        <ol class="list-decimal space-y-1 pl-5 text-fg-2">
+          <li>In a terminal on this machine, run <span class="mono text-fg">claude setup-token</span> and log in with your Claude account in the browser it opens.</li>
+          <li>Paste the token it prints (it starts with <span class="mono">sk-ant-</span>). It's stored encrypted and never shown again.</li>
+          <li>Pick which roles use it below.</li>
+        </ol>
+        <form method="POST" action="?/claudeToken" class="flex gap-2">
+          <input name="token" type="password" class="input mono" placeholder="sk-ant-…" autocomplete="off" aria-label="Claude subscription token" />
+          <button class="btn btn-primary whitespace-nowrap">{data.subscription ? "Replace token" : "Connect"}</button>
+        </form>
+        <p class="text-[12px] text-muted">How it works: roles on the subscription run the real Claude Code inside the sandbox container, signed in with this token; Miniasys never calls the API with it. That container needs network access to reach Anthropic, and the token is visible to processes in it. Mid-run tool approvals and questions aren't available on this engine (Claude Code acts on its own inside the sandbox). Usage counts against your plan's limits; count budgets in tokens to cap it.</p>
+      </div>
+      <form method="POST" action="?/engines" class="panel mt-3 space-y-2 p-3">
+        <div class="label">Engine per role</div>
+        {#each engineRoles as [key, label]}
+          <div class="flex items-center gap-3">
+            <span class="w-40 text-fg-2">{label}</span>
+            {#each [["api", "API credits"], ["claude_code", "Claude subscription"]] as [v, l]}
+              <label class="flex items-center gap-1.5"><input type="radio" name={key} value={v} checked={data.engines[key] === v} disabled={v === "claude_code" && !data.subscription} /> {l}</label>
+            {/each}
+          </div>
+        {/each}
+        <p class="text-[12px] text-muted">Routing decisions and context compaction stay on the API (Haiku costs cents there) or on Colibri once it runs.</p>
+        <button class="btn btn-primary">Save engines</button>
       </form>
     </section>
 
@@ -52,10 +93,15 @@
 
     <section id="budgets">
       <h2 class="mb-2 text-[14px] font-semibold">Budgets <span class="text-[12px] font-normal text-muted">defaults; alerts at 50% (inbox), 80% (phone), 100% (block + phone)</span></h2>
-      <form method="POST" action="?/budgets" class="panel space-y-2 p-3">
-        {#each data.budgets as b}
-          <div class="flex items-center gap-3"><label class="w-64 text-fg-2" for="b-{b.scope}">{budgetLabels[b.scope] ?? b.scope}</label><span class="text-muted">$</span><input id="b-{b.scope}" name={b.scope} type="number" step="0.01" min="0" class="input w-32" value={b.limitUsd} /></div>
-        {/each}
+      <form method="POST" action="?/budgets" class="panel space-y-3 p-3">
+        <div class="grid grid-cols-[16rem_9rem_10rem] items-center gap-x-3 gap-y-2">
+          <span></span><span class="label mb-0">Dollars</span><span class="label mb-0">Tokens</span>
+          {#each data.budgets as b}
+            <label class="text-fg-2" for="b-{b.scope}">{budgetLabels[b.scope] ?? b.scope}</label>
+            <input id="b-{b.scope}" name={b.scope} type="number" step="0.01" min="0" class="input" value={b.limitUsd} aria-label="{b.scope} dollars" />
+            <input name="{b.scope}_tokens" type="number" step="1000" min="0" class="input num" value={tokenFmt(b.limitTokens)} aria-label="{b.scope} tokens" />
+          {/each}
+        </div>
         <p class="text-[12px] text-muted">Project budgets are set in each project's settings.</p>
         <button class="btn btn-primary">Save budgets</button>
       </form>

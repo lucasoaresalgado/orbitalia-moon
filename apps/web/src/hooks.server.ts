@@ -1,6 +1,15 @@
 import { redirect } from "@sveltejs/kit";
 import type { Handle } from "@sveltejs/kit/hooks";
 import { COOKIE, validSession } from "#lib/server/auth.ts";
+import { database } from "#lib/server/db.ts";
+import { stopJobs } from "#lib/server/jobs.ts";
+
+// adapter-node emits this after closing the HTTP server on SIGTERM/SIGINT. The
+// database pool (and its LISTEN connection) would otherwise keep Node running forever.
+process.once("sveltekit:shutdown", async () => {
+  await stopJobs();
+  await database().close().catch(() => {});
+});
 
 const PUBLIC = ["/login"];
 

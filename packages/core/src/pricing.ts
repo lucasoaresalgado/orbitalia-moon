@@ -51,3 +51,11 @@ export function priceAt<T extends { effectiveFrom: string }>(rows: T[], at: Date
   const day = at.toISOString().slice(0, 10);
   return rows.filter((r) => r.effectiveFrom <= day).sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? 1 : -1))[0];
 }
+
+/**
+ * Usage tokens, the unit of subscription budgets: everything sent and produced,
+ * with cache reads at a tenth (they are cheap against plan limits as against price).
+ */
+export function usageTokens(u: Usage): number {
+  return Math.round(u.input + u.output + u.cacheWrite + u.cacheRead * 0.1);
+}

@@ -8,11 +8,16 @@ import { cards, moveCard, projects, runs, eq, getSetting, publish, SETTINGS } fr
 import { executeRun, finish, type FinalStatus, type RunRow } from "./agent/loop.ts";
 import type { Services } from "./services.ts";
 import type { Workspaces } from "./workspaces.ts";
+import { SubscriptionUnavailable } from "./claudecode/runner.ts";
+import { ConfigError } from "./errors.ts";
 
 const LEASE = "2 minutes";
 const HEARTBEAT_MS = 30_000;
 const WALL_TIME_MS = 30 * 60_000;
 const MAX_ATTEMPTS = 5;
+/** the run kinds this executor runs; briefs, reviews and reports are run by their pipeline job */
+const EXECUTED = ["agent", "manager", "test"];
+
 
 export class Executor {
   readonly owner = `${hostname()}:${process.pid}:${crypto.randomUUID().slice(0, 8)}`;
@@ -37,7 +42,7 @@ export class Executor {
     const [run] = await this.s.d.sql<RunRow[]>`
       UPDATE runs SET lease_owner = ${this.owner}, lease_expires_at = now() + ${LEASE}::interval, status = 'running',
         started_at = COALESCE(started_at, now()), attempt = attempt + 1
-      WHERE id = ${runId} AND status IN ('queued', 'running')
+      WHERE id = ${runId} AND status IN ('queued', 'running') AND kind = ANY(${EXECUTED})
         AND (lease_expires_at IS NULL OR lease_expires_at < now() OR lease_owner = ${this.owner})
       RETURNING id`;
     if (!run) return false;
@@ -95,7 +100,8 @@ export class Executor {
     const [r] = await this.s.d.db.select({ attempt: runs.attempt }).from(runs).where(eq(runs.id, run.id));
     const attempt = r?.attempt ?? 1;
     this.s.log.warn({ run: run.id, attempt, err: e.message }, "run error");
-    if (attempt < MAX_ATTEMPTS) {
+    const retryable = !(e instanceof ConfigError) && !(e instanceof SubscriptionUnavailable);
+    if (retryable && attempt < MAX_ATTEMPTS) {
       const delayS = Math.min(600, 2 ** attempt * 5) * (0.75 + Math.random() / 2);
       await this.s.d.sql`UPDATE runs SET status = 'queued', lease_owner = NULL, lease_expires_at = now() + make_interval(secs => ${delayS}), error = ${e.message} WHERE id = ${run.id}`;
       await this.s.journal.append(run.id, { type: "error", message: `${e.message} (retrying in ${Math.round(delayS)}s)` });
@@ -131,7 +137,7 @@ export class Executor {
     const free = this.maxConcurrent - this.running.size;
     if (free <= 0) return 0;
     const rows = await this.s.d.sql<{ id: string }[]>`
-      SELECT id FROM runs WHERE status IN ('queued', 'running') AND (lease_expires_at IS NULL OR lease_expires_at < now())
+      SELECT id FROM runs WHERE status IN ('queued', 'running') AND kind = ANY(${EXECUTED}) AND (lease_expires_at IS NULL OR lease_expires_at < now())
       ORDER BY created_at LIMIT ${free}`;
     let n = 0;
     for (const r of rows) if (await this.start(r.id)) n++;

@@ -20,6 +20,8 @@ Environment=PORT=3000
 Environment=ORIGIN=http://127.0.0.1:3000
 Environment=MINIASYS_ROOT=%h/miniasys
 Environment=NODE_ENV=production
+# adapter-node waits this long for open connections (live SSE streams) before closing them
+Environment=SHUTDOWN_TIMEOUT=5
 ExecStart=/usr/bin/node build/index.js
 Restart=on-failure
 RestartSec=5

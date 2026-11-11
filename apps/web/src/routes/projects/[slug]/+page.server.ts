@@ -7,7 +7,7 @@ export const load = async ({ parent }) => {
       COALESCE((SELECT sum(cost_usd) FROM llm_calls l WHERE l.card_id = c.id), 0) AS cost,
       EXISTS (SELECT 1 FROM runs r WHERE r.card_id = c.id AND r.status = 'running') AS live
     FROM cards c LEFT JOIN agents a ON a.id = c.assignee_agent_id
-    WHERE c.project_id = ${project.id} ORDER BY c.updated_at DESC`;
+    WHERE c.project_id = ${project.id} AND c.deleted_at IS NULL ORDER BY c.updated_at DESC`;
   const agents = await sql()<{ id: string; slug: string }[]>`SELECT id, slug FROM agents WHERE role = 'worker' ORDER BY slug`;
   return { cards, agents };
 };

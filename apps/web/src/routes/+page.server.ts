@@ -4,8 +4,8 @@ export const load = async () => {
   const [projects, agents, runs, setup] = await Promise.all([
     sql()<{ slug: string; name: string; repo: string | null; open: number; blocked: number; month: string }[]>`
       SELECT p.slug, p.name, p.repo_full_name AS repo,
-        (SELECT count(*)::int FROM cards c WHERE c.project_id = p.id AND c.status <> 'done') AS open,
-        (SELECT count(*)::int FROM cards c WHERE c.project_id = p.id AND c.status = 'blocked') AS blocked,
+        (SELECT count(*)::int FROM cards c WHERE c.project_id = p.id AND c.deleted_at IS NULL AND c.status <> 'done') AS open,
+        (SELECT count(*)::int FROM cards c WHERE c.project_id = p.id AND c.deleted_at IS NULL AND c.status = 'blocked') AS blocked,
         COALESCE((SELECT sum(cost_usd) FROM llm_calls l WHERE l.project_id = p.id AND l.created_at >= date_trunc('month', now())), 0) AS month
       FROM projects p WHERE p.status = 'active' ORDER BY p.name`,
     sql()<{ slug: string; name: string; role: string; model: string | null; version: number | null; today: number }[]>`

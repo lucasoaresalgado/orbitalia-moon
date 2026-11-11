@@ -87,6 +87,8 @@ body {
   @apply bg-surface-0 text-fg font-sans antialiased;
   font-feature-settings: "cv11", "ss01";
 }
+/* shared classes live in the components layer, so utilities (w-20, pl-7…) can override them */
+@layer components {
 .num {
   font-variant-numeric: tabular-nums;
 }
@@ -165,6 +167,8 @@ textarea.input {
 .prose-sm :where(td, th) {
   @apply border border-line px-1.5 py-0.5;
 }
+}
+
 .pulse {
   animation: pulse 1.4s ease-in-out infinite;
 }

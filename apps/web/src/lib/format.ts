@@ -30,7 +30,19 @@ export function ago(d: Date | string | null | undefined): string {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-export const time = (d: Date | string | null | undefined) => (d ? new Date(d).toLocaleString(undefined, { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—");
+/** The app's timezone (TIMEZONE), set by the root layout, so the server and the browser format alike. */
+let zone: string | undefined;
+export const setTimeZone = (tz: string) => (zone = tz);
+
+const sameDay = (a: Date, b: Date) => a.toLocaleDateString("en-CA", { timeZone: zone }) === b.toLocaleDateString("en-CA", { timeZone: zone });
+
+/** "14:47" today, "Nov 11 14:47" otherwise: 24-hour, one line. */
+export function time(d: Date | string | null | undefined): string {
+  if (!d) return "—";
+  const date = new Date(d);
+  const hm = date.toLocaleTimeString("en-GB", { timeZone: zone, hour: "2-digit", minute: "2-digit" });
+  return sameDay(date, new Date()) ? hm : `${date.toLocaleDateString("en-US", { timeZone: zone, month: "short", day: "numeric" })} ${hm}`;
+}
 
 export function modelShort(m: string | null | undefined): { label: string; tier: "opus" | "sonnet" | "haiku" | "local" } {
   const v = m ?? "";

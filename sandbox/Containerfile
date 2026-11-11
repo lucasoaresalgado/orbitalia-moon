@@ -2,12 +2,7 @@
 # DuckDB CLI, git, common test runners and the scanners. Nothing is downloaded
 # at run time unless a run's network access was approved.
 # Build: scripts/build-sandbox.sh  →  localhost/agent-sandbox:dev
-FROM docker.io/library/node:22-bookworm-slim
-
-ARG DUCKDB_VERSION=1.3.2
-ARG GITLEAKS_VERSION=8.28.0
-ARG TRIVY_VERSION=0.65.0
-ARG OSV_VERSION=2.2.2
+FROM docker.io/library/node:22-bookworm-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       bash ca-certificates curl git jq unzip make python3 python3-pip python3-venv ripgrep \
@@ -15,6 +10,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
+# Claude Code, for roles on the Claude subscription engine (it signs in with CLAUDE_CODE_OAUTH_TOKEN at run time)
+ARG CLAUDE_CODE_VERSION=2.1.322
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && npm cache clean --force
+
+# the runtime settings shared by both stages (the root filesystem is read-only at run time: caches go to /tmp)
+ENV HOME=/tmp/home XDG_CACHE_HOME=/tmp/cache npm_config_cache=/tmp/npm-cache PNPM_HOME=/tmp/pnpm PIP_CACHE_DIR=/tmp/pip-cache \
+    PYTHONDONTWRITEBYTECODE=1 GIT_CONFIG_NOSYSTEM=1
+WORKDIR /workspace
+CMD ["bash"]
+
+# the full image: test runners, DuckDB and the scanners (the default build target)
+FROM base AS full
+ARG DUCKDB_VERSION=1.3.2
+ARG GITLEAKS_VERSION=8.28.0
+ARG TRIVY_VERSION=0.65.0
+ARG OSV_VERSION=2.2.2
 RUN pip3 install --no-cache-dir --break-system-packages pytest ruff mypy semgrep duckdb pandas pyarrow
 
 RUN curl -fsSL "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip" -o /tmp/duckdb.zip \

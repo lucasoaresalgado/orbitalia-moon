@@ -9,7 +9,7 @@ export const load = async () => {
   const [health, res, queue, active] = await Promise.all([
     checks(),
     resources(),
-    sql()<{ name: string; state: string; n: number }[]>`SELECT name, state::text, count(*)::int AS n FROM pgboss.job WHERE state IN ('created', 'retry', 'active', 'failed') GROUP BY 1, 2 ORDER BY 1`.catch(() => []),
+    sql()<{ name: string; state: string; n: number }[]>`SELECT name, state::text, count(*)::int AS n FROM pgboss.job WHERE state IN ('created', 'retry', 'active', 'failed') AND name NOT LIKE '\_\_pgboss%' GROUP BY 1, 2 ORDER BY 1`.catch(() => []),
     sql()<{ id: string; kind: string; status: string; agent: string | null; started_at: Date | null; lease_owner: string | null }[]>`
       SELECT r.id, r.kind, r.status, a.slug AS agent, r.started_at, r.lease_owner FROM runs r LEFT JOIN agent_versions v ON v.id = r.agent_version_id LEFT JOIN agents a ON a.id = v.agent_id
       WHERE r.status IN ('queued', 'running', 'waiting_approval', 'waiting_input') ORDER BY r.created_at`,

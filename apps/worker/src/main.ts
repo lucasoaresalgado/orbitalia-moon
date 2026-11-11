@@ -9,10 +9,10 @@ import { PgBoss } from "pg-boss";
 import pino from "pino";
 import Anthropic from "@anthropic-ai/sdk";
 import { Envelope, loadConfig, parseMasterKey, PG_CHANNEL, type BusEvent } from "@miniasys/core";
-import { cards, connect, managerMessages, eq, and, lte, getSetting, setSetting, SETTINGS, DEFAULT_MODELS, DEFAULT_SANDBOX, type ModelSettings, type SandboxSettings } from "@miniasys/db";
+import { cards, connect, managerMessages, runs, eq, and, or, lte, getSetting, setSetting, SETTINGS, DEFAULT_MODELS, DEFAULT_SANDBOX, type ModelSettings, type SandboxSettings } from "@miniasys/db";
 import { runMigrations } from "@miniasys/db/migrate";
 import { seed } from "@miniasys/db/seed";
-import { ClaudeDecisionEngine, ColibriEngine, Decider, OllamaEmbeddings, textOf } from "@miniasys/llm";
+import { ClaudeDecisionEngine, ColibriEngine, Decider, OllamaEmbeddings } from "@miniasys/llm";
 import { SandboxRunner } from "@miniasys/sandbox";
 import { defaultRegistry } from "@miniasys/tools";
 import { systemBlocks } from "./agent/context.ts";
@@ -21,11 +21,13 @@ import { Executor } from "./executor.ts";
 import { GitHub } from "./github.ts";
 import { Journal } from "./journal.ts";
 import { embedNote } from "./knowledge.ts";
-import { callModel } from "./modelcall.ts";
+import { singleCall } from "./engine.ts";
 import { Models } from "./models.ts";
 import { Notifier } from "./notifier.ts";
 import { Pipeline } from "./pipeline.ts";
 import { QUEUES, type Services } from "./services.ts";
+import { CardDeleted } from "./errors.ts";
+import { buildIndex, cortexFile } from "@miniasys/cortex";
 import { Workspaces } from "./workspaces.ts";
 
 const config = loadConfig();
@@ -58,7 +60,7 @@ const envelope = new Envelope(parseMasterKey(config.masterKey ?? undefined));
 
 const s: Services = {
   config, d, log, boss, models, decider, notifier, github, envelope,
-  sandbox: new SandboxRunner(config.podmanSocket, sandboxSettings.maxConcurrent, config.logDir),
+  sandbox: new SandboxRunner(config.podmanSocket, sandboxSettings.maxConcurrent, config.logDir, config.containerRuntime),
   budgets: new Budgets(d, config.timeZone, notifier),
   journal: new Journal(d),
   registry: defaultRegistry(),
@@ -66,7 +68,7 @@ const s: Services = {
 };
 const sandboxHealth = await s.sandbox!.health();
 if (!sandboxHealth.ok) {
-  log.warn({ err: sandboxHealth.error }, "Podman socket unreachable: sandboxes are off until it is up");
+  log.warn({ err: sandboxHealth.error, runtime: config.containerRuntime }, "container socket unreachable: sandboxes are off until it is up");
 }
 
 const ws = new Workspaces(config.workspacesDir, github ? () => github.gitToken() : null);
@@ -82,6 +84,10 @@ const queue = async <T extends object>(name: string, handler: (data: T) => Promi
       try {
         await handler(job.data);
       } catch (e) {
+        if (e instanceof CardDeleted) {
+          log.info({ queue: name, job: job.id }, "card deleted: step skipped");
+          continue;
+        }
         log.error({ queue: name, job: job.id, err: (e as Error).message }, "job failed");
         throw e;
       }
@@ -100,6 +106,12 @@ await queue(QUEUES.prsPoll, () => pipeline.pollPrs(), { retryLimit: 0 });
 await queue(QUEUES.dailyReport, () => dailyReport(), { retryLimit: 1 });
 await queue(QUEUES.sweep, () => sweep(), { retryLimit: 0 });
 await queue(QUEUES.backup, () => backup(), { retryLimit: 2 });
+await queue<{ cardId: string }>(QUEUES.cardNote, (j) => pipeline.note(j.cardId));
+await queue<{ agentSlug: string; sources: string[] }>(QUEUES.cortexBuild, async (j) => {
+  // the agent's map of the storage: every markdown and parquet file under its sources, embedded when Ollama answers
+  const r = await buildIndex({ file: cortexFile(config.cortexDir, j.agentSlug), root: config.lakehouseDir, sources: j.sources, embed: (t) => s.embeddings.embed(t) });
+  await notifier.notify({ level: "info", title: `Cortex of a/${j.agentSlug} rebuilt: ${r.entries} files${r.embedded ? ", with embeddings" : " (no embeddings: Ollama unavailable, search uses keywords)"}`, link: `/agents/${j.agentSlug}?tab=cortex` });
+}, { retryLimit: 1 });
 
 // "at next wake" comes for free: pg-boss runs a missed schedule when the worker is back
 const tz = config.timeZone;
@@ -111,13 +123,14 @@ await boss.schedule(QUEUES.backup, "0 2 * * *", null, { tz });
 async function dailyReport() {
   const [iacy] = await d.sql<{ id: string; model: string; system_prompt: string }[]>`
     SELECT a.id, v.model, v.system_prompt FROM agents a JOIN agent_versions v ON v.id = a.active_version_id WHERE a.slug = 'iacy'`;
-  if (!iacy || !models.configured) return;
+  if (!iacy) return;
   const system = await systemBlocks(s, { prompt: iacy.system_prompt, tools: [], role: "manager", project: null, card: null });
-  const { done } = await callModel(s, {
-    runId: null, scope: { agentId: iacy.id }, model: iacy.model,
-    req: { system, messages: [{ role: "user", content: [{ type: "text", text: "Write today's daily report for Lucas: what moved since yesterday, what is blocked and why, spend against budget, PRs waiting for his merge. Ten lines at most." }] }], tools: [], effort: "low", maxOutputTokens: 1200 },
+  const [run] = await d.db.insert(runs).values({ kind: "report", status: "running", model: iacy.model, startedAt: new Date() }).returning();
+  const { text } = await singleCall(s, {
+    role: "manager", runId: run!.id, scope: { agentId: iacy.id }, model: iacy.model, system, effort: "low", maxOutputTokens: 1200,
+    prompt: "Write today's daily report for Lucas: what moved since yesterday, what is blocked and why, spend against budget, PRs waiting for his merge. Ten lines at most.",
   });
-  const text = textOf(done.message);
+  await d.db.update(runs).set({ status: "succeeded", finishedAt: new Date(), summary: text.slice(0, 500) }).where(eq(runs.id, run!.id));
   await d.db.insert(managerMessages).values({ projectId: null, role: "assistant", content: { text: `**Daily report**\n\n${text}` }, model: iacy.model });
   await notifier.notify({ level: "info", title: "Daily report", body: text.slice(0, 3000), link: "/manager", ntfy: "low" });
 }
@@ -129,7 +142,8 @@ async function sweep() {
     const n = await s.sandbox.sweep(settings.timeoutS + 120).catch(() => 0);
     if (n) log.info({ removed: n }, "sandbox sweep");
   }
-  const old = await d.db.select({ id: cards.id }).from(cards).where(and(eq(cards.status, "done"), lte(cards.updatedAt, new Date(Date.now() - 7 * 86_400_000))));
+  const weekAgo = new Date(Date.now() - 7 * 86_400_000);
+  const old = await d.db.select({ id: cards.id }).from(cards).where(or(and(eq(cards.status, "done"), lte(cards.updatedAt, weekAgo)), lte(cards.deletedAt, weekAgo)));
   for (const c of old) await ws.remove(c.id);
 }
 

@@ -42,4 +42,6 @@ export const QUEUES = {
   dailyReport: "report.daily",
   sweep: "maintenance.sweep",
   backup: "backup.nightly",
+  cardNote: "card.note",
+  cortexBuild: "cortex.build",
 } as const;

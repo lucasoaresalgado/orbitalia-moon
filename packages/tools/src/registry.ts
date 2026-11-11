@@ -22,7 +22,7 @@ export interface ToolOutcome {
 
 /** The board operations agents may perform on their own card; implemented by the worker. */
 export interface BoardApi {
-  updateCard(patch: { title?: string; acceptanceCriteriaMet?: string[] }): Promise<void>;
+  updateCard(patch: { title?: string; brief?: string; acceptanceCriteria?: string[]; acceptanceCriteriaMet?: string[] }): Promise<void>;
   log(message: string, data?: unknown): Promise<void>;
   comment(text: string): Promise<void>;
   requestHumanInput(question: string, options?: string[]): Promise<{ approvalId: string }>;
@@ -52,6 +52,16 @@ export interface ToolContext {
   } | null;
   notes: {
     search(query: string, limit: number): Promise<{ source: string; content: string; score: number }[]>;
+  } | null;
+  /** the agent's read-only map of the storage (null: no map for this agent) */
+  cortex: {
+    search(query: string, limit: number): Promise<{ index: number; path: string; kind: string; about: string; score: number }[]>;
+    read(ref: { path?: string; index?: number }, o: { sql?: string; limit?: number }): Promise<string>;
+  } | null;
+  /** the agent's own memories */
+  limbic: {
+    remember(text: string): Promise<void>;
+    forget(match: string): Promise<number>;
   } | null;
   /** usage accounting for tools that call models themselves */
   usage?: (u: Usage, model: string) => Promise<void>;

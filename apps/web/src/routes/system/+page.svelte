@@ -39,9 +39,9 @@
     <div class="panel p-3">
       <div class="label">Laptop</div>
       <div class="space-y-3">
-        <BudgetBar spent={data.res.memUsedGb} limit={data.res.memTotalGb} label="RAM {gb(data.res.memUsedGb)} of {gb(data.res.memTotalGb)}" />
-        {#if data.res.ssd.totalGb}<BudgetBar spent={data.res.ssd.totalGb - (data.res.ssd.freeGb ?? 0)} limit={data.res.ssd.totalGb} label="SSD (workspaces) {gb(data.res.ssd.freeGb)} free" />{/if}
-        {#if data.res.hdd.totalGb}<BudgetBar spent={data.res.hdd.totalGb - (data.res.hdd.freeGb ?? 0)} limit={data.res.hdd.totalGb} label="HDD (backups) {gb(data.res.hdd.freeGb)} free" />{:else}<p class="text-[12px] text-warn">Backup folder not found: {data.res.hdd.path}</p>{/if}
+        <BudgetBar format={(n) => gb(n)} spent={data.res.memUsedGb} limit={data.res.memTotalGb} label="RAM" />
+        {#if data.res.ssd.totalGb}<BudgetBar format={(n) => gb(n)} spent={data.res.ssd.totalGb - (data.res.ssd.freeGb ?? 0)} limit={data.res.ssd.totalGb} label="SSD (workspaces)" />{/if}
+        {#if data.res.hdd.totalGb}<BudgetBar format={(n) => gb(n)} spent={data.res.hdd.totalGb - (data.res.hdd.freeGb ?? 0)} limit={data.res.hdd.totalGb} label="HDD (backups)" />{:else}<p class="text-[12px] text-warn">Backup folder not found: {data.res.hdd.path}</p>{/if}
         <div class="text-[12px] text-muted">Load average {data.res.load.map((l) => l.toFixed(2)).join(" · ")}</div>
       </div>
     </div>

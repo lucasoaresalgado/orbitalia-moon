@@ -21,7 +21,15 @@ export interface SandboxRequest {
   pidsLimit?: number;
   timeoutS: number;
   env?: Record<string, string>;
+  /** a host folder mounted read-write at /claude-home and used as HOME (Claude Code keeps its sessions there) */
+  home?: string | null;
+  /** rootless Podman (the default, scope §10) or Docker (e.g. a WSL dev machine) */
+  runtime?: Runtime;
+  /** Docker only: the host uid:gid the container runs as, so files stay the user's */
+  user?: string;
 }
+
+export type Runtime = "podman" | "docker";
 
 export const SANDBOX_LABEL = "miniasys.run";
 
@@ -36,19 +44,25 @@ export function containerSpec(r: SandboxRequest) {
   // the worker runs git on the host in this workspace: the sandbox must not plant hooks or config there
   if (r.gitDir !== false) binds.push(`${r.workspace}/.git:/workspace/.git:ro`);
   if (r.lakehouse) binds.push(`${r.lakehouse}:/lakehouse:ro,z`);
+  if (r.home) {
+    if (!r.home.startsWith("/")) throw new Error("the home folder must be an absolute path");
+    binds.push(`${r.home}:/claude-home:Z`);
+  }
   const mem = Math.min(Math.max(r.memMb, 256), 2048) * 1024 * 1024;
+  const docker = r.runtime === "docker";
   return {
     name: containerName(r.runId, r.n),
     Image: r.image,
     Cmd: ["bash", "-lc", r.command],
     WorkingDir: "/workspace",
+    ...(docker && r.user ? { User: r.user } : {}),
     Labels: { [SANDBOX_LABEL]: r.runId },
-    Env: Object.entries(r.env ?? {}).map(([k, v]) => `${k}=${v}`),
+    Env: Object.entries({ ...(r.home ? { HOME: "/claude-home" } : {}), ...r.env }).map(([k, v]) => `${k}=${v}`),
     NetworkDisabled: !r.network,
     HostConfig: {
       Binds: binds,
-      // files written keep Lucas's ownership
-      UsernsMode: "keep-id",
+      // files written keep Lucas's ownership: keep-id on rootless Podman, the host uid on Docker
+      ...(docker ? {} : { UsernsMode: "keep-id" }),
       CapDrop: ["ALL"],
       SecurityOpt: ["no-new-privileges"],
       ReadonlyRootfs: true,
@@ -57,7 +71,7 @@ export function containerSpec(r: SandboxRequest) {
       Memory: mem,
       MemorySwap: mem,
       PidsLimit: r.pidsLimit ?? 256,
-      NetworkMode: r.network ? "slirp4netns" : "none",
+      NetworkMode: r.network ? (docker ? "bridge" : "slirp4netns") : "none",
       AutoRemove: false,
     },
   };

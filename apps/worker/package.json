@@ -11,6 +11,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",
     "@miniasys/core": "workspace:^",
+    "@miniasys/cortex": "workspace:^",
     "@miniasys/db": "workspace:^",
     "@miniasys/llm": "workspace:^",
     "@miniasys/sandbox": "workspace:^",

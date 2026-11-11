@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { goto, invalidateAll } from "$app/navigation";
   import BudgetBar from "#lib/components/BudgetBar.svelte";
+  import BudgetUnitSwitch from "#lib/components/BudgetUnitSwitch.svelte";
   import StackedBars from "#lib/components/StackedBars.svelte";
   import HBars from "#lib/components/HBars.svelte";
   import ModelBadge from "#lib/components/ModelBadge.svelte";
@@ -31,6 +32,7 @@
 <div class="mx-auto max-w-6xl space-y-4 p-5">
   <div class="flex items-center gap-2">
     <h2 class="text-[15px] font-semibold">Costs</h2>
+    <div class="ml-4"><BudgetUnitSwitch unit={data.unit} /></div>
     <select class="input ml-auto w-36" value={String(data.days)} onchange={(e) => goto(`?days=${(e.target as HTMLSelectElement).value}`)} aria-label="Period">
       <option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option>
     </select>
@@ -50,10 +52,14 @@
   </div>
 
   <div class="panel p-3">
-    <div class="label mb-2">Budgets</div>
+    <div class="mb-3 flex items-center gap-3"><span class="label mb-0">Budgets · {data.unit === "tokens" ? "usage tokens" : "dollars"}</span><a class="ml-auto text-[12px] text-accent" href="/settings#budgets">Edit limits</a></div>
     <div class="grid grid-cols-2 gap-x-6 gap-y-3">
       {#each data.budgets as b}
-        <BudgetBar spent={Number(b.spent_usd)} reserved={Number(b.reserved_usd)} limit={Number(b.limit_usd)} label="{b.scope.replace('_', ' ')}{b.label ? ` · ${b.label}` : ''}" />
+        {#if data.unit === "tokens"}
+          {#if b.limit_tokens != null}<BudgetBar format={(n) => tokens(n)} spent={Number(b.spent_tokens)} reserved={Number(b.reserved_tokens)} limit={Number(b.limit_tokens)} label="{b.scope.replace('_', ' ')}{b.label ? ` · ${b.label}` : ''} (tokens)" />{/if}
+        {:else}
+          <BudgetBar spent={Number(b.spent_usd)} reserved={Number(b.reserved_usd)} limit={Number(b.limit_usd)} label="{b.scope.replace('_', ' ')}{b.label ? ` · ${b.label}` : ''}" />
+        {/if}
       {:else}<p class="text-muted">No budget has been touched yet. Defaults live in Settings → Budgets.</p>{/each}
     </div>
     <p class="mt-3 text-[12px] text-muted">Also keep a monthly spend limit in the Anthropic Console: it holds even if this platform's enforcement had a bug. Raising a blocked budget happens from the inbox, so it is recorded.</p>

@@ -10,7 +10,7 @@ import type { Services } from "../services.ts";
 type Card = typeof cards.$inferSelect;
 type Project = typeof projects.$inferSelect;
 
-export async function systemBlocks(s: Services, o: { prompt: string; tools: string[]; role: string; project: Project | null; card: Card | null }): Promise<PromptBlock[]> {
+export async function systemBlocks(s: Services, o: { prompt: string; tools: string[]; role: string; project: Project | null; card: Card | null; limbic?: string }): Promise<PromptBlock[]> {
   const blocks: PromptBlock[] = [];
   let fixed = `${o.prompt.trim()}\n\n${SYSTEM_UNTRUSTED_RULE}`;
   if (o.tools.includes("load_skill")) {
@@ -18,6 +18,8 @@ export async function systemBlocks(s: Services, o: { prompt: string; tools: stri
     if (skills.length) fixed += `\n\n# Skills\nLoad one with load_skill before a task it covers:\n${skills.map((k) => `- ${k.name}: ${k.description}`).join("\n")}`;
   }
   blocks.push({ text: fixed, tier: "static" });
+  // the agent's start instructions and memories: they change rarely, so they cache with the project tier
+  if (o.limbic?.trim()) blocks.push({ text: o.limbic, tier: "project" });
 
   if (o.project) {
     let text = `# Project ${`p/${o.project.slug}`}: ${o.project.name}\n${o.project.description ?? ""}${o.project.repoFullName ? `\nRepository: ${o.project.repoFullName} (base branch ${o.project.defaultBranch})` : ""}`;
@@ -38,7 +40,7 @@ async function boardView(s: Services, project: Project | null): Promise<string> 
     SELECT p.slug, c.number, c.title, c.status, c.blocked_reason, c.pr_url,
       COALESCE((SELECT sum(cost_usd) FROM llm_calls l WHERE l.card_id = c.id), 0) AS cost
     FROM cards c JOIN projects p ON p.id = c.project_id
-    WHERE (${project?.id ?? null}::uuid IS NULL OR c.project_id = ${project?.id ?? null}) AND c.status <> 'done'
+    WHERE (${project?.id ?? null}::uuid IS NULL OR c.project_id = ${project?.id ?? null}) AND c.status <> 'done' AND c.deleted_at IS NULL
     ORDER BY c.updated_at DESC LIMIT 60`;
   const [spend] = await s.d.sql<{ today: string; month: string }[]>`
     SELECT COALESCE(sum(cost_usd) FILTER (WHERE created_at >= date_trunc('day', now())), 0) AS today,
@@ -48,13 +50,14 @@ async function boardView(s: Services, project: Project | null): Promise<string> 
 }
 
 /** The first message of a worker run: its card, brief, criteria, and any feedback that sent it back. */
-export function cardTask(project: Project, card: Card, feedback?: string | null): Message {
+export function cardTask(project: Project, card: Card, feedback?: string | null, notes: string[] = []): Message {
   const criteria = (card.acceptanceCriteria as (string | { text: string; met: boolean })[]).map((c) => (typeof c === "string" ? c : c.text));
   const text = [
     `Work on card ${cardPath(project.slug, card.number)}: ${card.title}`,
     `Kind: ${card.kind}. Branch: ${card.branch}. Your workspace is the repository at /workspace.`,
     `## Brief\n${card.brief ?? "(no brief; use the title and criteria)"}`,
     `## Acceptance criteria\n${criteria.map((c) => `- ${c}`).join("\n") || "- (none given)"}`,
+    notes.length ? `## Notes from Lucas on this card\nAct on them. If a note asks to change the card (title, brief, acceptance criteria), update it with update_card and say what you changed.\n${notes.map((n) => `- ${n}`).join("\n")}` : "",
     feedback ? `## Feedback on your previous attempt\n${feedback}` : "",
   ].filter(Boolean).join("\n\n");
   return { role: "user", content: [{ type: "text", text }] };
@@ -80,3 +83,11 @@ export async function managerHistory(s: Services, projectId: string | null, limi
   return out;
 }
 
+
+/** Notes Lucas left on a card that no run has handled yet; marked handled by `runId`. */
+export async function takeNotes(s: Services, cardId: string, runId: string): Promise<string[]> {
+  const rows = await s.d.sql<{ text: string }[]>`
+    UPDATE card_notes SET handled_at = now(), handled_run_id = ${runId}
+    WHERE card_id = ${cardId} AND handled_at IS NULL RETURNING text`;
+  return rows.map((r) => r.text);
+}

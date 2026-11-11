@@ -1,8 +1,8 @@
 // Board moves by Lucas (logged as actor = user) and card edits.
 import { error, json } from "@sveltejs/kit";
 import { CardPatch, InvalidTransition } from "@miniasys/core";
-import { cards, moveCard, runs, and, eq, inArray } from "@miniasys/db";
-import { database, db } from "#lib/server/db.ts";
+import { cardEvent, cards, moveCard, runs, and, eq, inArray } from "@miniasys/db";
+import { database, db, sql } from "#lib/server/db.ts";
 import { sendJob, wakeWorker } from "#lib/server/jobs.ts";
 import { userAudit } from "#lib/server/audit.ts";
 
@@ -36,5 +36,23 @@ export const POST = async ({ params }) => {
   }
   await moveCard(database(), params.id, "blocked", "user", { blockedReason: "needs_input", note: "paused by Lucas" }).catch(() => {});
   await userAudit("card.pause", { type: "card", id: params.id });
+  return json({ ok: true });
+};
+
+/** Deletes a card: its runs stop, it disappears from the board, and its history stays for the record. */
+export const DELETE = async ({ params }) => {
+  const [card] = await db().select().from(cards).where(eq(cards.id, params.id));
+  if (!card || card.deletedAt) error(404, "no such card");
+  const active = await db().select({ id: runs.id }).from(runs).where(and(eq(runs.cardId, card.id), inArray(runs.status, ["queued", "running", "waiting_approval", "waiting_input"])));
+  for (const r of active) {
+    await db().update(runs).set({ cancelRequested: true }).where(eq(runs.id, r.id));
+    await sql()`UPDATE runs SET status = 'canceled', finished_at = now(), error = 'card deleted' WHERE id = ${r.id} AND status IN ('queued', 'waiting_approval', 'waiting_input')`;
+    await wakeWorker("cancel", { id: r.id });
+  }
+  // what waited on Lucas for this card no longer does
+  await sql()`UPDATE approvals SET status = 'expired', decided_at = now() WHERE card_id = ${card.id} AND status = 'pending'`;
+  await db().update(cards).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(cards.id, card.id));
+  await cardEvent(database(), card.id, "user", "status_change", { from: card.status, to: "deleted" });
+  await userAudit("card.delete", { type: "card", id: card.id }, { title: card.title, number: card.number });
   return json({ ok: true });
 };

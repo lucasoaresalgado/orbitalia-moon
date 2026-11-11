@@ -26,3 +26,10 @@ export async function sendJob(name: string, data: object, singletonKey?: string)
 export async function wakeWorker(type: "queued" | "cancel" | "pause", data: object = {}) {
   await publish(sql(), { topic: "runs", type, data });
 }
+
+/** Closes pg-boss on shutdown (its pool would keep the process alive). */
+export async function stopJobs() {
+  if (!boss) return;
+  const b = await boss.catch(() => null);
+  await b?.stop({ graceful: false }).catch(() => {});
+}

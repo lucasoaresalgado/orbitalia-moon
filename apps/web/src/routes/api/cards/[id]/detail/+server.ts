@@ -14,17 +14,18 @@ export const GET = async ({ params, url }) => {
       COALESCE((SELECT sum(cost_usd) FROM llm_calls l WHERE l.card_id = c.id), 0) AS cost,
       (SELECT limit_usd FROM budgets b WHERE b.scope = 'card' AND b.scope_id = c.id) AS budget,
       (SELECT limit_usd FROM budget_defaults WHERE scope = 'card') AS default_budget
-    FROM cards c JOIN projects p ON p.id = c.project_id LEFT JOIN agents a ON a.id = c.assignee_agent_id WHERE c.id = ${id}`;
+    FROM cards c JOIN projects p ON p.id = c.project_id LEFT JOIN agents a ON a.id = c.assignee_agent_id WHERE c.id = ${id} AND c.deleted_at IS NULL`;
   if (!card) error(404, "no such card");
   if (url.searchParams.get("diff")) return json({ diff: await diff(card) });
-  const [events, runs, decisions, approvals] = await Promise.all([
+  const [events, runs, decisions, approvals, notes] = await Promise.all([
     sql()`SELECT id, actor, type, payload, duration_ms, tokens, cost_usd, created_at FROM card_events WHERE card_id = ${id} ORDER BY id DESC LIMIT 300`,
     sql()`SELECT r.id, r.kind, r.status, r.model, r.turn, r.cost_usd, r.tokens, r.started_at, r.finished_at, r.error, a.slug AS agent
       FROM runs r LEFT JOIN agent_versions v ON v.id = r.agent_version_id LEFT JOIN agents a ON a.id = v.agent_id WHERE r.card_id = ${id} ORDER BY r.created_at DESC`,
     sql()`SELECT id, type, engine, output, confidence, accepted, latency_ms, outcome, created_at FROM decisions WHERE card_id = ${id} ORDER BY id DESC`,
     sql()`SELECT id, kind, request, created_at FROM approvals WHERE card_id = ${id} AND status = 'pending'`,
+    sql()`SELECT id, text, created_at, handled_at, handled_run_id FROM card_notes WHERE card_id = ${id} ORDER BY id`,
   ]);
-  return json({ card, events, runs, decisions, approvals });
+  return json({ card, events, runs, decisions, approvals, notes });
 };
 
 /** The workspace diff against the base branch, read with hooks off (§11). */

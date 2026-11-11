@@ -16,15 +16,17 @@
   let messages = $state<Msg[]>([]);
   let plans = $state<Plan[]>([]);
   let busy = $state(false);
+  let failed = $state<{ runId: string; error: string } | null>(null);
   let text = $state("");
   let error = $state("");
   let list = $state<HTMLElement | null>(null);
 
   async function load() {
-    const r = await api<{ messages: Msg[]; plans: Plan[]; busy: boolean }>("/api/manager");
+    const r = await api<{ messages: Msg[]; plans: Plan[]; busy: boolean; failed: { runId: string; error: string } | null }>("/api/manager");
     messages = r.messages;
     plans = r.plans;
     busy = r.busy;
+    failed = r.busy ? null : r.failed;
     await tick();
     list?.scrollTo({ top: list.scrollHeight });
   }
@@ -52,6 +54,17 @@
     } catch (err) {
       error = (err as Error).message;
       text = t;
+    }
+  }
+  async function retry() {
+    if (!failed) return;
+    error = "";
+    try {
+      await api(`/api/runs/${failed.runId}/retry`, { body: {} });
+      failed = null;
+      busy = true;
+    } catch (e) {
+      error = (e as Error).message;
     }
   }
   async function decide(p: Plan, decision: "approve" | "reject") {
@@ -97,6 +110,16 @@
       </div>
     {/each}
     {#if busy}<div class="flex items-center gap-2 text-muted"><LoaderCircle size={13} class="animate-spin" /> Iacy is working…</div>{/if}
+    {#if failed}
+      <div class="border-l-2 border-bad pl-3 text-[12.5px]">
+        <div class="text-bad">Iacy couldn't answer: {failed.error}</div>
+        <div class="mt-1 flex gap-2">
+          <button class="btn" onclick={retry}>Retry</button>
+          <a class="btn" href="/runs/{failed.runId}">Open run</a>
+          <a class="btn" href="/settings#subscription">Engines</a>
+        </div>
+      </div>
+    {/if}
   </div>
   {#if error}<div class="border-l-2 border-bad px-3 py-1 text-[12px] text-bad">{error}</div>{/if}
   <form class="border-t border-line p-2 {dense ? '' : 'mx-auto w-full max-w-3xl'}" onsubmit={send}>

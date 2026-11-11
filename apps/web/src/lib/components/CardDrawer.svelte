@@ -2,7 +2,7 @@
   // The card drawer (scope §18.5): Overview · Activity · Runs · Decisions · Files.
   import { onMount } from "svelte";
   import { goto, invalidateAll } from "$app/navigation";
-  import { GitPullRequest, Pause, Check, Circle, LoaderCircle, PauseCircle } from "@lucide/svelte";
+  import { GitPullRequest, Pause, Check, Circle, LoaderCircle, PauseCircle, Trash2, StickyNote } from "@lucide/svelte";
   import Drawer from "./Drawer.svelte";
   import StatusBadge from "./StatusBadge.svelte";
   import ModelBadge from "./ModelBadge.svelte";
@@ -14,7 +14,9 @@
 
   let { cardId, project, onclose }: { cardId: string; project: { id: string; slug: string }; onclose: () => void } = $props();
   type Any = Record<string, any>;
-  let d = $state<{ card: Any; events: Any[]; runs: Any[]; decisions: Any[]; approvals: Any[] } | null>(null);
+  let d = $state<{ card: Any; events: Any[]; runs: Any[]; decisions: Any[]; approvals: Any[]; notes: Any[] } | null>(null);
+  let note = $state("");
+  let notePending = $state(false);
   let tab = $state("overview");
   let diffText = $state<string | null>(null);
   let open = $state(true);
@@ -41,6 +43,33 @@
     try {
       await f();
       await load();
+      await invalidateAll();
+    } catch (e) {
+      error = (e as Error).message;
+    }
+  }
+  async function addNote() {
+    const text = note.trim();
+    if (!text || notePending) return;
+    notePending = true;
+    error = "";
+    try {
+      await api(`/api/cards/${cardId}/notes`, { body: { text } });
+      note = "";
+      await load();
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      notePending = false;
+    }
+  }
+  async function remove() {
+    if (!d || !confirm(`Delete p/${project.slug}#${d.card.number} "${d.card.title}"? Its runs stop and it leaves the board; its history stays in the audit log.`)) return;
+    error = "";
+    try {
+      await api(`/api/cards/${cardId}`, { method: "DELETE" });
+      open = false;
+      onclose();
       await invalidateAll();
     } catch (e) {
       error = (e as Error).message;
@@ -82,6 +111,7 @@
         {#if activeRun}<button class="btn" onclick={() => act(() => api(`/api/cards/${cardId}`, { body: {} }))}><Pause size={13} /> Pause</button>{/if}
         {#if d.card.status === "blocked"}<button class="btn" onclick={() => act(() => api(`/api/cards/${cardId}`, { method: "PATCH", body: { status: "in_progress" } }))}>Resume</button>{/if}
         {#if d.card.status === "backlog"}<button class="btn btn-primary" onclick={() => act(() => api(`/api/cards/${cardId}`, { method: "PATCH", body: { status: "ready" } }))}>Start</button>{/if}
+        <button class="btn btn-danger ml-auto" onclick={remove} title="Delete this card"><Trash2 size={13} /> Delete</button>
       </div>
       {#if error}<p class="mt-2 border-l-2 border-bad pl-2 text-[12px] text-bad">{error}</p>{/if}
     {/if}
@@ -97,6 +127,21 @@
         {#if d.approvals.length}
           <a href="/inbox" class="mb-3 block rounded-md border border-warn/50 bg-warn/10 px-3 py-2 text-warn">{d.approvals.length} item{d.approvals.length > 1 ? "s" : ""} waiting in the inbox for this card →</a>
         {/if}
+        <div class="label flex items-center gap-1.5"><StickyNote size={12} /> Notes for the agent</div>
+        <div class="mb-4 space-y-1.5">
+          {#each d.notes as n}
+            <div class="rounded-md border border-line bg-surface-2 px-2.5 py-1.5">
+              <div class="whitespace-pre-wrap">{n.text}</div>
+              <div class="mt-0.5 text-[11px] text-muted">{time(n.created_at)} · {n.handled_at ? "picked up by the agent" : activeRun ? "the agent reads it at its next turn" : "waiting for the agent"}</div>
+            </div>
+          {/each}
+          <textarea class="input" rows="2" placeholder="Tell the agent something: a correction, a detail, or a change to this card…" bind:value={note}
+            onkeydown={(e) => e.key === "Enter" && (e.ctrlKey || e.metaKey) && addNote()}></textarea>
+          <div class="flex items-center gap-2">
+            <button class="btn" disabled={!note.trim() || notePending} onclick={addNote}>Add note</button>
+            <span class="text-[11.5px] text-muted">Ctrl+Enter. The agent acts on it and may edit the card's title, brief or criteria if you ask.</span>
+          </div>
+        </div>
         <div class="label">Pipeline</div>
         <ol class="mb-4 space-y-1">
           {#each steps as s}

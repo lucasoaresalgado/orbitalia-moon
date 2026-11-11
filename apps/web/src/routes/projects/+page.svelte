@@ -1,6 +1,5 @@
 <script lang="ts">
   import { Plus } from "@lucide/svelte";
-  import PathLabel from "#lib/components/PathLabel.svelte";
   import EmptyState from "#lib/components/EmptyState.svelte";
   let { data } = $props();
 </script>
@@ -11,7 +10,7 @@
   <div class="panel">
     {#each data.projects as p}
       <a class="row" href="/projects/{p.slug}">
-        <span class="font-medium">{p.name}</span><PathLabel path="p/{p.slug}" href="/projects/{p.slug}" />
+        <span class="font-medium">{p.name}</span><span class="mono text-fg-2">p/{p.slug}</span>
         <span class="truncate text-muted">{p.description ?? ""}</span>
         {#if p.repo}<span class="mono ml-auto rounded bg-surface-3 px-1.5 text-muted">{p.repo}</span>{/if}
         <span class="w-28 text-right text-muted {p.repo ? '' : 'ml-auto'}">{p.open} open · {p.done} done</span>

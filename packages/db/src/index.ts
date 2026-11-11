@@ -60,6 +60,10 @@ export const SETTINGS = {
   /** role → model id; ids live in configuration, never in code (§8.1) */
   models: "models",
   paused: "agents_paused",
+  /** role → "api" | "claude_code" */
+  engines: "engines",
+  /** "usd" | "tokens": what budgets enforce */
+  budgetUnit: "budget_unit",
   sandbox: "sandbox",
   schedules: "schedules",
 } as const;
@@ -97,3 +101,15 @@ export interface SandboxSettings {
 export const DEFAULT_SANDBOX: SandboxSettings = { cpus: 1, memMb: 1024, maxConcurrent: 2, timeoutS: 300, networkAllowlist: [] };
 
 export * from "./cards.ts";
+
+export type Engine = "api" | "claude_code";
+export interface EngineSettings {
+  manager: Engine;
+  worker: Engine;
+  reviewer: Engine;
+  brief_writer: Engine;
+}
+export const DEFAULT_ENGINES: EngineSettings = { manager: "api", worker: "api", reviewer: "api", brief_writer: "api" };
+
+/** The secret holding the token from `claude setup-token` (encrypted with the master key). */
+export const CLAUDE_TOKEN_SECRET = "CLAUDE_CODE_OAUTH_TOKEN";

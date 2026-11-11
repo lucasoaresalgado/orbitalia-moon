@@ -15,6 +15,8 @@ export interface Decision {
   answer?: string;
   /** a budget raise, in dollars added to each blocking budget */
   raiseUsd?: number;
+  /** a budget raise in usage tokens (when budgets count tokens) */
+  raiseTokens?: number;
 }
 
 export async function decide(id: string, d: Decision) {
@@ -36,10 +38,18 @@ export async function decide(id: string, d: Decision) {
     response = { ...response, answer: d.answer ?? null };
   } else if (ap.kind === "budget_raise" && d.decision === "approve") {
     const blocking = (req.blocking as { id: number; limit: number }[] | undefined) ?? [];
-    const raise = d.raiseUsd && d.raiseUsd > 0 ? d.raiseUsd : null;
-    if (!raise) error(400, "say how much to raise");
-    if (blocking.length) await db().update(budgets).set({ limitUsd: dsql`${budgets.limitUsd} + ${raise}` }).where(inArray(budgets.id, blocking.map((b) => b.id)));
-    response = { ...response, raiseUsd: raise };
+    const ids = blocking.map((b) => b.id);
+    if (req.unit === "tokens") {
+      const raise = d.raiseTokens && d.raiseTokens > 0 ? Math.round(d.raiseTokens) : null;
+      if (!raise) error(400, "say how many tokens to add");
+      if (ids.length) await db().update(budgets).set({ limitTokens: dsql`COALESCE(${budgets.limitTokens}, 0) + ${raise}` }).where(inArray(budgets.id, ids));
+      response = { ...response, raiseTokens: raise };
+    } else {
+      const raise = d.raiseUsd && d.raiseUsd > 0 ? d.raiseUsd : null;
+      if (!raise) error(400, "say how much to raise");
+      if (ids.length) await db().update(budgets).set({ limitUsd: dsql`${budgets.limitUsd} + ${raise}` }).where(inArray(budgets.id, ids));
+      response = { ...response, raiseUsd: raise };
+    }
   }
 
   await db().update(approvals).set({ status: d.decision === "approve" ? "approved" : "rejected", response, decidedAt: new Date() }).where(eq(approvals.id, id));

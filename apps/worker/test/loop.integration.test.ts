@@ -1,13 +1,14 @@
 // Integration tests (scope §21): the agent loop end to end on a real Postgres
 // with a scripted model. Skipped unless TEST_DATABASE_URL points at a database
 // that may be wiped (e.g. a throwaway pgvector container).
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { buildIndex, cortexFile } from "@miniasys/cortex";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { Envelope, loadConfig } from "@miniasys/core";
-import { approvals, budgetDefaults, cards, connect, createCard, projects, runs, toolCalls, eq, type Database } from "@miniasys/db";
+import { approvals, budgetDefaults, cardNotes, cards, connect, createCard, projects, runs, toolCalls, eq, setSetting, SETTINGS, type Database } from "@miniasys/db";
 import { runMigrations } from "@miniasys/db/migrate";
 import { seed } from "@miniasys/db/seed";
 import { Decider, MockClient, type ScriptedTurn } from "@miniasys/llm";
@@ -69,7 +70,8 @@ describe.skipIf(!url)("agent loop (Postgres + scripted model)", () => {
   beforeEach(async () => {
     await d!.sql`UPDATE agent_versions v SET tools = ${JSON.stringify(savedTools)}::jsonb FROM agents a WHERE a.active_version_id = v.id AND a.slug = 'dev'`;
     await d!.sql`DELETE FROM budgets`;
-    await d!.db.update(budgetDefaults).set({ limitUsd: 3 }).where(eq(budgetDefaults.scope, "global_day"));
+    await d!.db.update(budgetDefaults).set({ limitUsd: 3, limitTokens: 5_000_000 }).where(eq(budgetDefaults.scope, "global_day"));
+    await setSetting(d!.db, SETTINGS.budgetUnit, "usd");
   });
   afterAll(async () => {
     await d?.close();
@@ -137,6 +139,88 @@ describe.skipIf(!url)("agent loop (Postgres + scripted model)", () => {
     expect([c.status, c.blockedReason]).toEqual(["blocked", "budget"]);
     const reserved = (await d!.sql<{ reserved: number }[]>`SELECT COALESCE(sum(reserved_usd), 0)::float8 AS reserved FROM budgets`)[0]!.reserved;
     expect(reserved).toBe(0);
+  });
+
+  it("counts tokens when the switch says so: dollars to spare don't help", async () => {
+    await setSetting(d!.db, SETTINGS.budgetUnit, "tokens");
+    await d!.db.update(budgetDefaults).set({ limitUsd: 1000, limitTokens: 50 }).where(eq(budgetDefaults.scope, "global_day"));
+    const s = services();
+    const { run } = await newRun();
+    mock = new MockClient([say("never sent")]);
+    await new Promise((r) => setTimeout(r, 5100)); // the unit is cached for 5 s
+    expect(await executeRun(s, new Workspaces(tmp, null), run, new AbortController().signal)).toBe("waiting_approval");
+    expect(mock.requests).toHaveLength(0);
+    const [ap] = await d!.db.select().from(approvals).where(eq(approvals.runId, run.id));
+    expect((ap!.request as { unit: string }).unit).toBe("tokens");
+  });
+
+  it("records tokens next to dollars on every call", async () => {
+    const s = services();
+    const { run } = await newRun();
+    mock = new MockClient([say("hello")]);
+    expect(await executeRun(s, new Workspaces(tmp, null), run, new AbortController().signal)).toBe("succeeded");
+    const row = (await d!.sql<{ usd: number; tokens: number }[]>`SELECT spent_usd::float8 AS usd, spent_tokens::int AS tokens FROM budgets WHERE scope = 'global_day'`)[0]!;
+    expect(row.usd).toBeGreaterThan(0);
+    expect(row.tokens).toBe(150); // the mock's 100 in + 50 out
+  });
+
+  it("acts on Lucas's notes: before the run, and mid-run at the next turn; it may rewrite the card", async () => {
+    const s = services();
+    const { run, card } = await newRun();
+    await d!.db.insert(cardNotes).values({ cardId: card.id, text: "Use a .txt file, and make the brief say so." });
+    mock = new MockClient([
+      toolUse("t1", "update_card", { brief: "Write hello.txt", acceptance_criteria: ["hello.txt exists", "it says hi"] }),
+      toolUse("t2", "write_file", { path: "hello.txt", content: "hi" }),
+      say("done"),
+    ]);
+    // a second note arrives while the agent works: after its first tool call
+    const orig = mock.stream.bind(mock);
+    let calls = 0;
+    mock.stream = async function* (req) {
+      if (++calls === 2) await d!.db.insert(cardNotes).values({ cardId: card.id, text: "Also add a newline at the end." });
+      yield* orig(req);
+    };
+    const ws = new Workspaces(tmp, null);
+    // the mid-run note is inserted during call 2 and delivered with call 3
+    expect(await executeRun(s, ws, run, new AbortController().signal)).toBe("succeeded");
+    expect(JSON.stringify(mock.requests[0]!.messages[0])).toContain("Use a .txt file");
+    expect(JSON.stringify(mock.requests[2]!.messages.at(-1))).toContain("Also add a newline");
+    const c = (await d!.db.select().from(cards).where(eq(cards.id, card.id)))[0]!;
+    expect(c.brief).toBe("Write hello.txt");
+    expect((c.acceptanceCriteria as { text: string }[]).map((x) => x.text)).toEqual(["hello.txt exists", "it says hi"]);
+    const left = await d!.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM card_notes WHERE card_id = ${card.id} AND handled_at IS NULL`;
+    expect(left[0]!.n).toBe(0);
+  });
+
+  it("remembers in its limbic and reads its cortex, but only what is on the map", async () => {
+    const s = services();
+    s.config.lakehouseDir = join(tmp, "storage");
+    s.config.cortexDir = join(tmp, "storage", "cortex");
+    await mkdir(join(tmp, "storage", "docs"), { recursive: true });
+    // the map covers only/; docs/private.md is on the storage but not on the map
+    await writeFile(join(tmp, "storage", "docs", "private.md"), "# Not mapped\n\nsecret");
+    await mkdir(join(tmp, "storage", "only"), { recursive: true });
+    await writeFile(join(tmp, "storage", "only", "style.md"), "# Style guide\n\nAll files end with a newline and use two-space indentation.\n");
+    await buildIndex({ file: cortexFile(s.config.cortexDir, "dev"), root: s.config.lakehouseDir, sources: ["only"], embed: null });
+    const { run } = await newRun();
+    mock = new MockClient([
+      toolUse("t1", "cortex_search", { query: "style guide indentation" }),
+      toolUse("t2", "cortex_read", { path: "only/style.md" }),
+      toolUse("t3", "cortex_read", { path: "docs/private.md" }),
+      toolUse("t4", "limbic_remember", { memory: "Files in this project use two-space indentation." }),
+      say("done"),
+    ]);
+    expect(await executeRun(s, new Workspaces(tmp, null), run, new AbortController().signal)).toBe("succeeded");
+    const results = mock.requests.slice(1).map((r) => JSON.stringify(r.messages.at(-1)));
+    expect(results[0]).toContain("only/style.md");
+    expect(results[1]).toContain("two-space indentation");
+    expect(results[2]).toMatch(/isn't on this agent's cortex map/);
+    expect(results[2]).not.toContain("secret");
+    // the memory is in the next run's prompt
+    const next = await newRun();
+    mock = new MockClient([say("ok")]);
+    await executeRun(s, new Workspaces(tmp, null), next.run, new AbortController().signal);
+    expect(JSON.stringify(mock.requests[0]!.system)).toContain("two-space indentation");
   });
 
   it("resumes from its checkpoint after an interruption without repeating turns", async () => {

@@ -4,7 +4,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import Docker from "dockerode";
-import { containerSpec, demux, SANDBOX_LABEL, tail, type SandboxRequest } from "./profile.ts";
+import { PassThrough } from "node:stream";
+import { containerSpec, demux, SANDBOX_LABEL, tail, type Runtime, type SandboxRequest } from "./profile.ts";
 
 export interface SandboxResult {
   containerName: string;
@@ -47,9 +48,14 @@ export class SandboxRunner {
     socketPath: string,
     maxConcurrent = 2,
     private logDir: string | null = null,
+    readonly runtime: Runtime = "podman",
   ) {
     this.docker = new Docker({ socketPath });
     this.sem = new Semaphore(maxConcurrent);
+  }
+
+  private withRuntime(req: SandboxRequest): SandboxRequest {
+    return { ...req, runtime: this.runtime, ...(this.runtime === "docker" && process.getuid ? { user: `${process.getuid()}:${process.getgid!()}` } : {}) };
   }
 
   set maxConcurrent(n: number) {
@@ -62,7 +68,7 @@ export class SandboxRunner {
 
   async run(req: SandboxRequest, signal?: AbortSignal): Promise<SandboxResult> {
     await this.sem.acquire();
-    const spec = containerSpec(req);
+    const spec = containerSpec(this.withRuntime(req));
     const started = Date.now();
     let container: Docker.Container | null = null;
     let timedOut = false;
@@ -94,6 +100,72 @@ export class SandboxRunner {
         await writeFile(fullLogPath, `$ ${req.command}\n--- stdout\n${stdout}\n--- stderr\n${stderr}\n`);
       }
       return { containerName: spec.name, exitCode, timedOut, stdout, stderr, stdoutTail: tail(stdout), stderrTail: tail(stderr), durationMs: Date.now() - started, fullLogPath };
+    } finally {
+      if (container) await container.remove({ force: true }).catch(() => {});
+      this.sem.release();
+    }
+  }
+
+  /**
+   * Like run, but hands each stdout line to `onLine` as it is written (Claude Code's
+   * stream-json). `onLine` may return "stop" to kill the container (a budget used up).
+   */
+  async stream(req: SandboxRequest, onLine: (line: string) => void | "stop" | Promise<void | "stop">, signal?: AbortSignal): Promise<SandboxResult & { stopped: boolean }> {
+    await this.sem.acquire();
+    const spec = containerSpec(this.withRuntime(req));
+    const started = Date.now();
+    let container: Docker.Container | null = null;
+    let timedOut = false;
+    let stopped = false;
+    let stdout = "";
+    let stderr = "";
+    try {
+      container = await this.docker.createContainer(spec as Docker.ContainerCreateOptions);
+      const c = container;
+      const kill = () => void c.kill().catch(() => {});
+      const logs = (await c.attach({ stream: true, stdout: true, stderr: true })) as NodeJS.ReadableStream;
+      let buf = "";
+      let chain = Promise.resolve();
+      const out = new PassThrough();
+      const err = new PassThrough();
+      c.modem.demuxStream(logs, out, err);
+      out.on("data", (chunk: Buffer) => {
+        const text = chunk.toString("utf8");
+        stdout += text;
+        buf += text;
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          if (!line.trim()) continue;
+          chain = chain.then(async () => {
+            if (stopped) return;
+            if ((await onLine(line)) === "stop") {
+              stopped = true;
+              kill();
+            }
+          });
+        }
+      });
+      err.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
+      await c.start();
+      const timer = setTimeout(() => {
+        timedOut = true;
+        kill();
+      }, req.timeoutS * 1000);
+      signal?.addEventListener("abort", kill, { once: true });
+      let exitCode: number | null = null;
+      try {
+        const w = (await c.wait()) as { StatusCode: number };
+        exitCode = timedOut || stopped ? null : w.StatusCode;
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", kill);
+      }
+      await new Promise((r) => setTimeout(r, 50));
+      if (buf.trim() && !stopped) chain = chain.then(async () => void (await onLine(buf)));
+      await chain;
+      return { containerName: spec.name, exitCode, timedOut, stopped, stdout, stderr, stdoutTail: tail(stdout), stderrTail: tail(stderr), durationMs: Date.now() - started, fullLogPath: null };
     } finally {
       if (container) await container.remove({ force: true }).catch(() => {});
       this.sem.release();

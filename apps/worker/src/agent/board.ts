@@ -1,7 +1,7 @@
 // The BoardApi a run's tools see: its own card, the inbox, and (for the
 // manager) plan proposals.
 import { cardPath, CHANNELS, PlanContent } from "@miniasys/core";
-import { approvals, cardEvent, cards, plans, projects, publish, and, desc, eq, type Actor } from "@miniasys/db";
+import { approvals, cardEvent, cards, plans, projects, publish, and, desc, eq, isNull, type Actor } from "@miniasys/db";
 import type { BoardApi } from "@miniasys/tools";
 import type { Services } from "../services.ts";
 
@@ -30,10 +30,13 @@ export function boardApi(s: Services, r: RunScope): BoardApi {
       const id = needCard();
       const [card] = await s.d.db.select().from(cards).where(eq(cards.id, id));
       if (!card) return;
-      const criteria = (card.acceptanceCriteria as (string | { text: string; met: boolean })[]).map((c) => (typeof c === "string" ? { text: c, met: false } : c));
+      const old = (card.acceptanceCriteria as (string | { text: string; met: boolean })[]).map((c) => (typeof c === "string" ? { text: c, met: false } : c));
+      // a new list keeps what was already met for criteria that stay
+      const criteria = patch.acceptanceCriteria ? patch.acceptanceCriteria.map((text) => ({ text, met: old.find((o) => o.text === text)?.met ?? false })) : old;
       const met = new Set(patch.acceptanceCriteriaMet ?? []);
       await s.d.db.update(cards).set({
         ...(patch.title ? { title: patch.title } : {}),
+        ...(patch.brief ? { brief: patch.brief } : {}),
         acceptanceCriteria: criteria.map((c) => ({ ...c, met: c.met || met.has(c.text) })),
         updatedAt: new Date(),
       }).where(eq(cards.id, id));
@@ -79,7 +82,7 @@ export function boardApi(s: Services, r: RunScope): BoardApi {
         .select({ number: cards.number, title: cards.title, status: cards.status, blockedReason: cards.blockedReason, slug: projects.slug })
         .from(cards)
         .innerJoin(projects, eq(projects.id, cards.projectId))
-        .where(and(r.projectId ? eq(cards.projectId, r.projectId) : undefined, filter.status ? eq(cards.status, filter.status) : undefined))
+        .where(and(isNull(cards.deletedAt), r.projectId ? eq(cards.projectId, r.projectId) : undefined, filter.status ? eq(cards.status, filter.status) : undefined))
         .orderBy(cards.number)
         .limit(200);
       return rows.map((c) => ({ path: cardPath(c.slug, c.number), title: c.title, status: c.status, blockedReason: c.blockedReason }));

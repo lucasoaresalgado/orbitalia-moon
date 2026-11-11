@@ -29,9 +29,10 @@
     }
   }
   const approve = (a: (typeof data.approvals)[number]) =>
-    a.kind === "budget_raise" ? decide(a.id, "approve", { raiseUsd: raise[a.id] ?? suggested(a) }) : a.kind === "question" ? decide(a.id, "approve", { answer: answers[a.id] ?? "" }) : decide(a.id, "approve");
+    a.kind === "budget_raise" ? decide(a.id, "approve", a.request.unit === "tokens" ? { raiseTokens: raise[a.id] ?? suggested(a) } : { raiseUsd: raise[a.id] ?? suggested(a) }) : a.kind === "question" ? decide(a.id, "approve", { answer: answers[a.id] ?? "" }) : decide(a.id, "approve");
   const reject = (a: (typeof data.approvals)[number]) => decide(a.id, "reject", { comment: prompt("Why? (the agent reads this)") ?? "" });
-  const suggested = (a: { request: Record<string, any> }) => Math.max(1, Math.ceil(((a.request.blocking?.[0]?.limit as number | undefined) ?? 2) / 2));
+  const suggested = (a: { request: Record<string, any> }) =>
+    a.request.unit === "tokens" ? Math.max(100_000, Math.ceil(((a.request.blocking?.[0]?.limit as number | undefined) ?? 1_000_000) / 2 / 100_000) * 100_000) : Math.max(1, Math.ceil(((a.request.blocking?.[0]?.limit as number | undefined) ?? 2) / 2));
   const link = (a: { kind: string; request: Record<string, any>; card: string | null; run_id: string | null }) =>
     a.kind === "plan" ? `/projects/${a.request.projectSlug}/plan` : a.card ? `/cards/${a.card.replace("#", "/")}` : a.run_id ? `/runs/${a.run_id}` : "/inbox";
 
@@ -76,7 +77,7 @@
           <pre class="mt-1 max-h-48 overflow-auto rounded bg-surface-0 p-2 font-mono text-[11.5px]">{JSON.stringify(a.request.input, null, 2)}</pre>
         {:else if a.kind === "budget_raise"}
           <p class="mt-1">{a.request.message}</p>
-          <div class="mt-2 flex items-center gap-2 text-[12px]"><label for="r-{a.id}">Raise each blocking budget by $</label><input id="r-{a.id}" type="number" min="0.5" step="0.5" class="input w-24" value={raise[a.id] ?? suggested(a)} oninput={(e) => (raise[a.id] = Number((e.target as HTMLInputElement).value))} /></div>
+          <div class="mt-2 flex items-center gap-2 text-[12px]"><label for="r-{a.id}">Raise each blocking budget by {a.request.unit === "tokens" ? "tokens" : "$"}</label><input id="r-{a.id}" type="number" min={a.request.unit === "tokens" ? 10000 : 0.5} step={a.request.unit === "tokens" ? 100000 : 0.5} class="input {a.request.unit === 'tokens' ? 'w-32' : 'w-24'}" value={raise[a.id] ?? suggested(a)} oninput={(e) => (raise[a.id] = Number((e.target as HTMLInputElement).value))} /></div>
         {:else}
           <pre class="mt-1 text-[12px]">{JSON.stringify(a.request, null, 2)}</pre>
         {/if}

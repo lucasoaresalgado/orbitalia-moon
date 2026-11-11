@@ -56,6 +56,22 @@ pnpm check                      # TypeScript + svelte-check
 
 After changing `packages/db/src/schema.ts`: `pnpm db:generate` writes a new SQL migration.
 
+## API credits or your Claude subscription
+
+Each role (Iacy, workers, reviewer, brief writer) runs on one of two engines,
+chosen in **Settings → Claude subscription**:
+
+- **API credits** (default): Miniasys's own agent loop on the Messages API, per-token billing.
+- **Claude subscription**: the real Claude Code CLI, headless, inside the sandbox
+  container, signed in with the token from `claude setup-token` (stored encrypted).
+  Miniasys never calls the API with that token. Trade-offs: the container needs
+  network access and can see the token; mid-run approvals and questions aren't
+  available; the account's claude.ai connectors are switched off (`--strict-mcp-config`).
+
+**Settings → Budgets** has a switch for what budgets count: dollars (API credits) or
+usage tokens (subscription). Both are always recorded. With tokens, a subscription run
+holds what the budget has left and is stopped live when it has used it.
+
 ## How a card flows
 
 1. You ask Iacy in the Manager. She proposes a plan (`create_cards`); it waits in the inbox.

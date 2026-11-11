@@ -1,7 +1,6 @@
 <script lang="ts">
   import { Plus } from "@lucide/svelte";
   import ModelBadge from "#lib/components/ModelBadge.svelte";
-  import PathLabel from "#lib/components/PathLabel.svelte";
   import { usd } from "#lib/format.ts";
   let { data } = $props();
 </script>

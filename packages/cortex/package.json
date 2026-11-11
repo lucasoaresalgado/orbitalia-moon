@@ -1,0 +1,16 @@
+{
+  "name": "@miniasys/cortex",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc -p ."
+  },
+  "dependencies": {
+    "@duckdb/node-api": "2.0.0-r.1",
+    "@miniasys/core": "workspace:^"
+  }
+}

@@ -55,6 +55,17 @@ export const agents = pgTable("agents", {
   createdAt: now("created_at"),
 });
 
+/**
+ * The Limbic: an agent's start instructions (written by Lucas) and its memories
+ * (written by the agent itself, and editable by Lucas). Both go into every run's prompt.
+ */
+export const limbic = pgTable("limbic", {
+  agentId: uuid("agent_id").primaryKey().references(() => agents.id),
+  instructions: text("instructions").notNull().default(""),
+  memories: text("memories").notNull().default(""),
+  updatedAt: now("updated_at"),
+});
+
 export const agentVersions = pgTable("agent_versions", {
   id: uuid("id").primaryKey().defaultRandom(),
   agentId: uuid("agent_id").notNull().references(() => agents.id),
@@ -102,7 +113,19 @@ export const cards = pgTable("cards", {
   dueAt: ts("due_at"),
   createdAt: now("created_at"),
   updatedAt: now("updated_at"),
+  /** deleted by Lucas: hidden everywhere, kept for the record */
+  deletedAt: ts("deleted_at"),
 }, (t) => [uniqueIndex().on(t.projectId, t.number), uniqueIndex("cards_plan_key_idx").on(t.planId, t.planKey)]);
+
+/** Lucas's notes on a card; the card's agent acts on each one once. */
+export const cardNotes = pgTable("card_notes", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  cardId: uuid("card_id").notNull().references(() => cards.id),
+  text: text("text").notNull(),
+  createdAt: now("created_at"),
+  handledAt: ts("handled_at"),
+  handledRunId: uuid("handled_run_id"),
+}, (t) => [index().on(t.cardId, t.id)]);
 
 export const cardEvents = pgTable("card_events", {
   id: bigserial("id", { mode: "number" }).primaryKey(),
@@ -287,12 +310,17 @@ export const budgets = pgTable("budgets", {
   periodStart: date("period_start"),
   spentUsd: money("spent_usd").notNull().default(0),
   reservedUsd: money("reserved_usd").notNull().default(0),
+  /** the same budget in usage tokens; both are always tracked, the unit switch decides which one blocks */
+  limitTokens: bigint("limit_tokens", { mode: "number" }),
+  spentTokens: bigint("spent_tokens", { mode: "number" }).notNull().default(0),
+  reservedTokens: bigint("reserved_tokens", { mode: "number" }).notNull().default(0),
 }, (t) => [unique("budgets_scope_key").on(t.scope, t.scopeId, t.periodStart).nullsNotDistinct()]);
 
 /** Default limits per scope; budgets rows are created from these when a period or a card starts. */
 export const budgetDefaults = pgTable("budget_defaults", {
   scope: text("scope").primaryKey(),
   limitUsd: numeric("limit_usd", { precision: 10, scale: 2, mode: "number" }).notNull(),
+  limitTokens: bigint("limit_tokens", { mode: "number" }),
   warnPct: integer("warn_pct").array().notNull().default(sql`'{50,80}'`),
 });
 

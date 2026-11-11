@@ -1,7 +1,6 @@
 <script lang="ts">
   // A run's details (scope §18.5 Runs): Transcript · Tool calls · Sandbox · Cost · Raw.
-  import { onMount } from "svelte";
-  import { goto } from "$app/navigation";
+    import { goto } from "$app/navigation";
   import { X, RotateCcw, SquareArrowOutUpRight } from "@lucide/svelte";
   import Transcript from "./Transcript.svelte";
   import StatusBadge from "./StatusBadge.svelte";
@@ -16,10 +15,10 @@
   let tab = $state("transcript");
   let err = $state("");
   const load = async () => (d = await api(`/api/runs/${runId}`));
-  onMount(() => live([`run:${runId}`], throttle(() => void load(), 600)));
   $effect(() => {
-    runId;
+    const id = runId;
     void load();
+    return live([`run:${id}`], throttle(() => void load(), 600));
   });
   async function act(path: string) {
     err = "";

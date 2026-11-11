@@ -7,12 +7,77 @@ const ok = (content: string): ToolOutcome => ({ content, summary: content.slice(
 
 export const updateCard = defineTool({
   name: "update_card",
-  description: "Update your own card: its title, or mark acceptance criteria you have met (exact text).",
-  input: z.object({ title: z.string().min(3).max(120).optional(), criteria_met: z.array(z.string()).optional() }),
+  description:
+    "Update your own card: its title, its brief, its acceptance criteria (the full new list), or mark criteria you have met (exact text). Change the brief or criteria only when Lucas's note asks for it, and say what you changed.",
+  input: z.object({
+    title: z.string().min(3).max(120).optional(),
+    brief: z.string().min(1).max(20_000).optional(),
+    acceptance_criteria: z.array(z.string().min(1)).min(1).max(30).optional(),
+    criteria_met: z.array(z.string()).optional(),
+  }),
   risk: "low",
   execute: async (i, ctx) => {
-    await ctx.board.updateCard({ ...(i.title ? { title: i.title } : {}), ...(i.criteria_met ? { acceptanceCriteriaMet: i.criteria_met } : {}) });
+    await ctx.board.updateCard({
+      ...(i.title ? { title: i.title } : {}),
+      ...(i.brief ? { brief: i.brief } : {}),
+      ...(i.acceptance_criteria ? { acceptanceCriteria: i.acceptance_criteria } : {}),
+      ...(i.criteria_met ? { acceptanceCriteriaMet: i.criteria_met } : {}),
+    });
     return ok("card updated");
+  },
+});
+
+export const cortexSearch = defineTool({
+  name: "cortex_search",
+  description: "Search your cortex: the map of markdown documents and parquet tables you may read. Returns each match's index, path, kind and what it is about.",
+  input: z.object({ query: z.string().min(2), limit: z.number().int().min(1).max(20).default(8) }),
+  risk: "low",
+  execute: async (i, ctx) => {
+    if (!ctx.cortex) return { content: "You have no cortex map yet.", summary: "no cortex", isError: true };
+    const hits = await ctx.cortex.search(i.query, i.limit);
+    return { content: hits.map((h) => `#${h.index} [${h.kind}] ${h.path} (${h.score.toFixed(2)})\n  ${h.about}`).join("\n") || "nothing on the map matches", summary: `${hits.length} matches`, untrusted: true };
+  },
+});
+
+export const cortexRead = defineTool({
+  name: "cortex_read",
+  description:
+    "Read a file from your cortex map, by path or index. Markdown comes back as text. For a parquet table you get its columns and rows, or the result of `sql` run over it as table `t` (a single read-only SELECT).",
+  input: z.object({ path: z.string().optional(), index: z.number().int().min(0).optional(), sql: z.string().max(4000).optional(), limit: z.number().int().min(1).max(500).default(50) }),
+  risk: "low",
+  execute: async (i, ctx) => {
+    if (!ctx.cortex) return { content: "You have no cortex map yet.", summary: "no cortex", isError: true };
+    if (i.path == null && i.index == null) return { content: "Give a path or an index from cortex_search.", summary: "no file given", isError: true };
+    try {
+      const text = await ctx.cortex.read({ ...(i.path ? { path: i.path } : {}), ...(i.index != null ? { index: i.index } : {}) }, { ...(i.sql ? { sql: i.sql } : {}), limit: i.limit });
+      return { content: text, summary: `read ${i.path ?? `#${i.index}`}`, untrusted: true };
+    } catch (e) {
+      return { content: (e as Error).message, summary: (e as Error).message.slice(0, 100), isError: true };
+    }
+  },
+});
+
+export const limbicRemember = defineTool({
+  name: "limbic_remember",
+  description: "Save a memory for your future runs: a fact, a preference of Lucas's, or a lesson learned. One short self-contained sentence or two. It goes into your prompt from now on.",
+  input: z.object({ memory: z.string().min(5).max(1000) }),
+  risk: "low",
+  execute: async (i, ctx) => {
+    if (!ctx.limbic) return { content: "Memory is not available.", summary: "no limbic", isError: true };
+    await ctx.limbic.remember(i.memory);
+    return ok("remembered");
+  },
+});
+
+export const limbicForget = defineTool({
+  name: "limbic_forget",
+  description: "Remove memories that are wrong or outdated: every memory line containing the given text.",
+  input: z.object({ match: z.string().min(3).max(500) }),
+  risk: "low",
+  execute: async (i, ctx) => {
+    if (!ctx.limbic) return { content: "Memory is not available.", summary: "no limbic", isError: true };
+    const n = await ctx.limbic.forget(i.match);
+    return ok(n ? `forgot ${n} memor${n === 1 ? "y" : "ies"}` : "no memory matched");
   },
 });
 
@@ -106,4 +171,4 @@ export const searchNotes = defineTool({
   },
 });
 
-export const BOARD_TOOLS = [updateCard, addCardLog, comment, requestHumanInput, notifyUser, createCards, listCards, loadSkill, searchNotes];
+export const BOARD_TOOLS = [updateCard, addCardLog, comment, requestHumanInput, notifyUser, createCards, listCards, loadSkill, searchNotes, cortexSearch, cortexRead, limbicRemember, limbicForget];

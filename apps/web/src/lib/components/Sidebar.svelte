@@ -2,10 +2,10 @@
   import { page } from "$app/state";
   import { invalidateAll } from "$app/navigation";
   import { House, Bot, LayoutGrid, Boxes, Play, DollarSign, Inbox, Users, Database, Settings, HeartPulse, ScrollText, PanelLeftClose, PanelLeftOpen, FolderKanban } from "@lucide/svelte";
-  import { usd } from "#lib/format.ts";
+  import { usd, tokens } from "#lib/format.ts";
   import { api } from "#lib/api.ts";
 
-  let { data }: { data: { projects: { slug: string; name: string }[]; scope: { slug: string; name: string } | null; inbox: number; paused: boolean; spendToday: number; dailyLimit: number } } = $props();
+  let { data }: { data: { projects: { slug: string; name: string }[]; scope: { slug: string; name: string } | null; inbox: number; paused: boolean; spendToday: number; dailyLimit: number; unit: "usd" | "tokens"; tokensToday: number; dailyTokenLimit: number } } = $props();
   let collapsed = $state(false);
   $effect(() => {
     try {
@@ -44,7 +44,7 @@
     ] },
   ]);
   const active = (href: string, match?: string) => (href === "/" ? page.url.pathname === "/" : page.url.pathname.startsWith(match ?? href));
-  const pct = $derived(data.dailyLimit ? data.spendToday / data.dailyLimit : 0);
+  const pct = $derived(data.unit === "tokens" ? (data.dailyTokenLimit ? data.tokensToday / data.dailyTokenLimit : 0) : data.dailyLimit ? data.spendToday / data.dailyLimit : 0);
 </script>
 
 <nav class="flex shrink-0 flex-col border-r border-line bg-surface-1 transition-[width] duration-200 {collapsed ? 'w-12' : 'w-52'}" aria-label="Main">
@@ -88,12 +88,12 @@
       {/each}
     {/each}
   </div>
-  <a href="/costs" class="block border-t border-line px-3 py-2 text-[11.5px] hover:bg-surface-2" title="Today's spend vs daily budget">
+  <a href="/costs" class="block border-t border-line px-3 py-2 text-[11.5px] hover:bg-surface-2" title="Today against the daily budget">
     {#if collapsed}
       <span class="block h-2 w-2 rounded-full {data.paused ? 'bg-warn' : 'bg-ok'}"></span>
     {:else}
       <div class="flex items-center gap-1.5 text-fg-2"><span class="h-1.5 w-1.5 rounded-full {data.paused ? 'bg-warn' : 'bg-ok'}"></span>{data.paused ? "agents paused" : "agents running"}</div>
-      <div class="num mt-0.5 {pct >= 1 ? 'text-bad' : pct >= 0.8 ? 'text-warn' : 'text-muted'}">{usd(data.spendToday)} / {usd(data.dailyLimit)} today</div>
+      <div class="num mt-0.5 {pct >= 1 ? 'text-bad' : pct >= 0.8 ? 'text-warn' : 'text-muted'}">{#if data.unit === "tokens"}{tokens(data.tokensToday)} / {tokens(data.dailyTokenLimit)} tokens today{:else}{usd(data.spendToday)} / {usd(data.dailyLimit)} today{/if}</div>
     {/if}
   </a>
 </nav>

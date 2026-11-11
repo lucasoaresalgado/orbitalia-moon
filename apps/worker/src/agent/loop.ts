@@ -11,12 +11,15 @@ import { specOf, type ToolContext } from "@miniasys/tools";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { BudgetExceeded } from "../budgets.ts";
+import { executeClaudeCodeRun } from "../claudecode/run.ts";
+import { engineFor } from "../engine.ts";
 import { loadSkill, searchNotes } from "../knowledge.ts";
 import { callModel, Runaway } from "../modelcall.ts";
 import type { Services } from "../services.ts";
 import type { Workspaces, CardRef } from "../workspaces.ts";
 import { boardApi, requestApproval } from "./board.ts";
-import { cardTask, managerHistory, systemBlocks } from "./context.ts";
+import { cardTask, managerHistory, systemBlocks, takeNotes } from "./context.ts";
+import { cortexOf, cortexRead, cortexSearch, forget, getLimbic, limbicBlock, remember } from "../memory.ts";
 
 export type RunRow = typeof runs.$inferSelect;
 export type FinalStatus = "succeeded" | "failed" | "canceled" | "waiting_approval" | "waiting_input" | "interrupted";
@@ -37,6 +40,8 @@ export async function executeRun(s: Services, ws: Workspaces, run: RunRow, signa
   const [agentRow] = await s.d.db.select().from(agents).where(eq(agents.id, version.agentId));
   if (!agentRow) return fail(s, run, "agent missing");
   const agent = agentRow;
+  // the Claude subscription engine runs the whole task in Claude Code (claudecode/run.ts)
+  if (["agent", "manager", "test"].includes(run.kind) && (await engineFor(s, agent.role)) === "claude_code") return executeClaudeCodeRun(s, ws, run, signal);
   const limits = AgentLimits.parse(version.limits);
   const perms = AgentPermissions.parse(version.permissions);
   const model = run.model ?? version.model;
@@ -61,6 +66,7 @@ export async function executeRun(s: Services, ws: Workspaces, run: RunRow, signa
 
   if (card?.status === "blocked") await moveCard(s.d, card.id, "in_progress", "system", { note: "run resumed" }).catch(() => {});
 
+  const map = await cortexOf(s, agent.slug);
   const scope: CallScope & { agentVersionId: string } = { projectId, cardId: card?.id ?? null, meetingId: run.meetingId, agentId: agent.id, agentVersionId: version.id };
   let sandboxN = 0;
   const ctx: ToolContext = {
@@ -98,9 +104,13 @@ export async function executeRun(s: Services, ws: Workspaces, run: RunRow, signa
     } } : null,
     skills: { load: (name) => loadSkill(s.config.skillsDir, name) },
     notes: { search: (q, n) => searchNotes(s, projectId, q, n) },
+    cortex: map
+      ? { search: (q, n) => cortexSearch(s, map, q, n), read: (ref, o) => cortexRead(s, map, ref, o) }
+      : null,
+    limbic: { remember: (text) => remember(s, agent.id, text), forget: (match) => forget(s, agent.id, match) },
   };
 
-  const system = await systemBlocks(s, { prompt: version.systemPrompt, tools: [...allowed.keys()], role: agent.role, project: project ?? null, card: card ?? null });
+  const system = await systemBlocks(s, { prompt: version.systemPrompt, tools: [...allowed.keys()], role: agent.role, project: project ?? null, card: card ?? null, limbic: limbicBlock(await getLimbic(s, agent.id)) });
   const specs = tools.map(specOf);
 
   let cp: Checkpoint = (run.checkpoint as Checkpoint | null) ?? { messages: await initialMessages(s, run, project ?? null, card ?? null), turn: 0, pending: {} };
@@ -124,7 +134,15 @@ export async function executeRun(s: Services, ws: Workspaces, run: RunRow, signa
       continue;
     }
 
-    // the user (or tool results) spoke last: call the model
+    // the user (or tool results) spoke last: call the model, with any note Lucas left meanwhile
+    if (card && cp.turn > 0) {
+      const fresh = await takeNotes(s, card.id, run.id);
+      if (fresh.length) {
+        const lastMsg = cp.messages.at(-1)!;
+        (lastMsg.content as { type: "text"; text: string }[]).push({ type: "text", text: `[Lucas added a note to this card while you work. Act on it; if it asks to change the card, use update_card.]\n${fresh.map((n) => `- ${n}`).join("\n")}` });
+        await s.journal.append(run.id, { type: "text", turn: cp.turn, text: `📝 Note from Lucas: ${fresh.join(" / ")}` });
+      }
+    }
     const wrapUp = cp.turn >= limits.max_turns;
     if (wrapUp) {
       cp.messages.push({ role: "assistant", content: [{ type: "text", text: "(turn limit reached)" }] });
@@ -270,7 +288,7 @@ export async function executeRun(s: Services, ws: Workspaces, run: RunRow, signa
     const where = project && card ? cardPath(project.slug, card.number) : `a/${agent.slug}`;
     await requestApproval(s, {
       kind: "budget_raise", runId: run.id, cardId: card?.id ?? null,
-      request: { message: e.message, blocking: e instanceof BudgetExceeded ? e.blocking.map((b) => ({ id: b.id, scope: b.scope, limit: b.limitUsd, spent: b.spentUsd })) : [], estimate: e instanceof BudgetExceeded ? e.estimateUsd : null },
+      request: { message: e.message, unit: e instanceof BudgetExceeded ? e.unit : "usd", blocking: e instanceof BudgetExceeded ? e.blocking.map((b) => ({ id: b.id, scope: b.scope, limit: b.limitUsd, spent: b.spentUsd })) : [], estimate: e instanceof BudgetExceeded ? e.estimate : null },
       title: `Budget reached on ${where}: raise it?`, body: e.message,
     });
     if (card) await moveCard(s.d, card.id, "blocked", "system", { blockedReason: "budget", note: e.message }).catch(() => {});
@@ -289,7 +307,7 @@ function answerText(kind: string, status: string, response: unknown): string {
 async function initialMessages(s: Services, run: RunRow, project: typeof projects.$inferSelect | null, card: typeof cards.$inferSelect | null): Promise<Message[]> {
   const input = (run.input ?? {}) as { text?: string; feedback?: string };
   if (run.kind === "manager") return managerHistory(s, run.projectId);
-  if (card && project) return [cardTask(project, card, input.feedback)];
+  if (card && project) return [cardTask(project, card, input.feedback, await takeNotes(s, card.id, run.id))];
   if (input.text) return [{ role: "user", content: [{ type: "text", text: input.text }] }];
   return [];
 }

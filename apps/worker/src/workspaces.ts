@@ -6,6 +6,7 @@ import { mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { simpleGit, type SimpleGit } from "simple-git";
 import { isAgentBranch } from "@miniasys/core";
+import { ConfigError } from "./errors.ts";
 
 const SAFE = ["core.hooksPath=/dev/null", "core.fsmonitor=false", "credential.helper=", "protocol.file.allow=never", "core.sshCommand=false"];
 const BOT = { name: "miniasys[bot]", email: "miniasys-bot@users.noreply.github.com" };
@@ -57,10 +58,16 @@ export class Workspaces {
       await g.checkoutLocalBranch(card.branch);
       return dir;
     }
-    if (!this.token) throw new Error("GitHub is not configured; this card's project has a repository");
-    const token = await this.token();
+    // without the GitHub App a public repository is still cloned (anonymously); pushing needs the App later
+    const token = this.token ? await this.token() : undefined;
     const url = `https://github.com/${card.repo}.git`;
-    await this.git(this.root, token).clone(url, dir, ["--no-tags"]);
+    try {
+      await this.git(this.root, token).clone(url, dir, ["--no-tags"]);
+    } catch (e) {
+      await rm(dir, { recursive: true, force: true });
+      if (!token) throw new ConfigError(`can't clone ${card.repo}: it isn't public and the GitHub App isn't configured (Settings → Connections)`);
+      throw e;
+    }
     const g = this.git(dir, token);
     await g.addConfig("user.name", BOT.name).addConfig("user.email", BOT.email);
     const remote = await g.listRemote(["--heads", "origin", card.branch]);
@@ -95,7 +102,8 @@ export class Workspaces {
 
   async push(card: CardRef): Promise<void> {
     if (!isAgentBranch(card.branch)) throw new Error(`refusing to push ${card.branch}: agents push only to agent/*`);
-    if (!card.repo || !this.token) throw new Error("no repository to push to");
+    if (!card.repo) throw new Error("no repository to push to");
+    if (!this.token) throw new ConfigError("the GitHub App isn't configured, so the branch can't be pushed (Settings → Connections)");
     const g = this.git(this.pathOf(card.id), await this.token());
     await g.push("origin", `HEAD:refs/heads/${card.branch}`, ["--force-with-lease"]);
   }

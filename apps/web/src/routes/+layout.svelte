@@ -7,7 +7,12 @@
   import CommandPalette from "#lib/components/CommandPalette.svelte";
   import Shortcuts from "#lib/components/Shortcuts.svelte";
 
+  import { setTimeZone } from "#lib/format.ts";
+
   let { data, children } = $props();
+  // before any child renders, on the server and in the browser
+  // svelte-ignore state_referenced_locally
+  setTimeZone(data.timeZone);
   let managerOpen = $state(false);
   let paletteOpen = $state(false);
   let helpOpen = $state(false);

@@ -3,6 +3,7 @@
   // right; Save draft, Test, Deploy (with a diff and a change note).
   import { untrack } from "svelte";
   import { invalidateAll } from "$app/navigation";
+  import { page } from "$app/state";
   import { ArrowLeft, History, Play, Save, Rocket } from "@lucide/svelte";
   import Transcript from "#lib/components/Transcript.svelte";
   import Drawer from "#lib/components/Drawer.svelte";
@@ -19,7 +20,29 @@
   let form = $state<V>(base ? structuredClone(toInput(base)) : { model: "claude-haiku-5-5", fallback_model: null, system_prompt: "", tools: [], skills: [], permissions: {}, limits: {} });
   let saved = $state(JSON.stringify(form));
   const dirty = $derived(JSON.stringify(form) !== saved);
-  let tab = $state("general");
+  let tab = $state(untrack(() => page.url.searchParams.get("tab") ?? "general"));
+  let lim = $state(untrack(() => ({ ...data.limbic })));
+  let sources = $state(untrack(() => data.cortex.sources.join("\n")));
+  let cortexFilter = $state("");
+  async function saveLimbic() {
+    err = msg = "";
+    try {
+      await api(`/api/agents/${data.agent.slug}/limbic`, { method: "PUT", body: lim });
+      msg = "Limbic saved: it goes into every run from now on.";
+      await invalidateAll();
+    } catch (e) {
+      err = (e as Error).message;
+    }
+  }
+  async function rebuildCortex() {
+    err = msg = "";
+    try {
+      await api(`/api/agents/${data.agent.slug}/cortex`, { body: { sources: sources.split("\n").map((x) => x.trim()).filter(Boolean) } });
+      msg = "Rebuilding the cortex map: you'll get a notification when it's done.";
+    } catch (e) {
+      err = (e as Error).message;
+    }
+  }
   let msg = $state("");
   let err = $state("");
   let testText = $state("");
@@ -96,7 +119,7 @@
   <div class="flex min-h-0 flex-1">
     <div class="flex min-w-0 flex-1 flex-col border-r border-line">
       <div class="flex border-b border-line px-3" role="tablist">
-        {#each [["general", "General"], ["prompt", "Prompt"], ["tools", "Tools"], ["skills", "Skills"], ["permissions", "Permissions"], ["budget", "Budget"]] as [id, label]}
+        {#each [["general", "General"], ["prompt", "Prompt"], ["limbic", "Limbic"], ["cortex", "Cortex"], ["tools", "Tools"], ["skills", "Skills"], ["permissions", "Permissions"], ["budget", "Budget"]] as [id, label]}
           <button role="tab" aria-selected={tab === id} class="tab {tab === id ? 'tab-active' : ''}" onclick={() => (tab = id!)}>{label}</button>
         {/each}
       </div>
@@ -114,6 +137,33 @@
           <div class="mb-1 flex items-center text-[12px] text-muted"><span>System prompt (markdown)</span><span class="num ml-auto">≈ {estimateTokens(form.system_prompt)} tokens</span></div>
           <textarea class="input mono h-[60vh] text-[12px] leading-relaxed" bind:value={form.system_prompt} spellcheck="false"></textarea>
           <p class="mt-2 text-[12px] text-muted">The project's context and the card's brief are added after it (cached separately). Tool results always arrive marked as untrusted data.</p>
+        {:else if tab === "limbic"}
+          <div class="max-w-3xl space-y-3">
+            <p class="text-[12px] text-muted">The Limbic goes into every run of a/{data.agent.slug}, on either engine. You write the start instructions; the agent writes its own memories (limbic_remember / limbic_forget, or a remember block on the subscription), and you can edit them here. Not versioned with the prompt: changes apply to the next run.</p>
+            <div><label class="label" for="li">Start instructions</label><textarea id="li" class="input" rows="8" bind:value={lim.instructions} placeholder="What this agent should always keep in mind: conventions, preferences, context…"></textarea></div>
+            <div><label class="label" for="lm">Memories</label><textarea id="lm" class="input mono text-[12px]" rows="12" bind:value={lim.memories} placeholder="- (2026-11-11) Lucas prefers small PRs with one commit"></textarea></div>
+            <button class="btn btn-primary" onclick={saveLimbic}>Save limbic</button>
+          </div>
+        {:else if tab === "cortex"}
+          <div class="space-y-3">
+            <p class="max-w-3xl text-[12px] text-muted">The Cortex is the map of what a/{data.agent.slug} may read: one row per markdown or parquet file on the storage, with what it is about and an embedding. The agent searches it with cortex_search and reads files with cortex_read (parquet through read-only SQL); it can read nothing that isn't on the map. On the subscription engine, the most relevant entries are added to its prompt.</p>
+            <div class="panel p-3 text-[12.5px]">
+              <div class="mono text-[12px] text-fg-2">{data.cortex.file}</div>
+              <div class="mt-1 text-muted">{data.cortex.count ? `${data.cortex.count} files${data.cortex.embedded ? " · with embeddings" : " · no embeddings (keyword search)"} · built ${new Date(data.cortex.builtAt ?? 0).toLocaleString()}` : "No map yet."}</div>
+              <label class="label mt-3" for="cs">Folders to map, relative to the storage <span class="mono normal-case">{data.cortex.storage}</span>, one per line</label>
+              <textarea id="cs" class="input mono" rows="3" bind:value={sources} placeholder="docs&#10;gold"></textarea>
+              <button class="btn btn-primary mt-2" disabled={!sources.trim()} onclick={rebuildCortex}>{data.cortex.count ? "Rebuild map" : "Build map"}</button>
+              <span class="ml-2 text-[11.5px] text-muted">Or write <span class="mono">{data.agent.slug}_ctx.parquet</span> yourself (columns: index, path, kind, about, embedding) from a pipeline.</span>
+            </div>
+            {#if data.cortex.count}
+              <input class="input w-72" placeholder="Filter the map…" bind:value={cortexFilter} />
+              <div class="panel">
+                {#each data.cortex.entries.filter((e) => !cortexFilter || `${e.path} ${e.about}`.toLowerCase().includes(cortexFilter.toLowerCase())).slice(0, 300) as e}
+                  <div class="row h-auto items-start py-1.5"><span class="mono w-10 text-muted">#{e.index}</span><span class="w-16 text-[11px] text-fg-2">{e.kind}</span><span class="mono w-64 truncate" title={e.path}>{e.path}</span><span class="flex-1 text-[12px] text-muted">{e.about}</span></div>
+                {/each}
+              </div>
+            {/if}
+          </div>
         {:else if tab === "tools"}
           <div class="panel">
             {#each data.tools as t}
@@ -158,7 +208,7 @@
         <textarea class="input" rows="4" placeholder="Add a /health endpoint that returns…" bind:value={testText}></textarea>
         <div class="mt-2 flex items-center gap-2">
           <label class="text-[12px] text-muted" for="tb">Test budget $</label><input id="tb" type="number" step="0.05" min="0.05" max="5" class="input w-20" bind:value={testBudget} />
-          <button class="btn btn-primary ml-auto" disabled={!testText.trim()} onclick={test}><Play size={13} /> Run test</button>
+          <button class="btn btn-primary ml-auto whitespace-nowrap" disabled={!testText.trim()} onclick={test}><Play size={13} /> Run test</button>
         </div>
       </div>
       <div class="min-h-0 flex-1 overflow-y-auto p-3">

@@ -3,7 +3,6 @@
   import { goto } from "$app/navigation";
   import StatusBadge from "#lib/components/StatusBadge.svelte";
   import ModelBadge from "#lib/components/ModelBadge.svelte";
-  import PathLabel from "#lib/components/PathLabel.svelte";
   import EmptyState from "#lib/components/EmptyState.svelte";
   import { usd, duration, between, time } from "#lib/format.ts";
 
@@ -54,7 +53,7 @@
     {#if tab === "projects"}
       {#each data.projects.filter((p) => f(p.name) || f(p.slug)) as p}
         <a class="row" href="/projects/{p.slug}">
-          <span class="font-medium">{p.name}</span><PathLabel path="p/{p.slug}" href="/projects/{p.slug}" />
+          <span class="font-medium">{p.name}</span><span class="mono text-fg-2">p/{p.slug}</span>
           {#if p.repo}<span class="mono rounded bg-surface-3 px-1.5 text-muted">{p.repo}</span>{/if}
           <span class="ml-auto text-muted">{p.open} open</span>
           {#if p.blocked}<span class="text-warn">{p.blocked} blocked</span>{/if}
@@ -64,7 +63,7 @@
     {:else if tab === "agents"}
       {#each data.agents.filter((a) => f(a.name) || f(a.slug)) as a}
         <a class="row" href="/agents/{a.slug}">
-          <span class="font-medium">{a.name}</span><PathLabel path="a/{a.slug}" href="/agents/{a.slug}" />
+          <span class="font-medium">{a.name}</span><span class="mono text-fg-2">a/{a.slug}</span>
           <span class="text-muted">{a.role}</span><ModelBadge model={a.model} full />
           <span class="mono ml-auto text-muted">{a.version ? `v${a.version}` : "draft"}</span>
           <span class="w-24 text-right text-muted">{a.today} runs today</span>
@@ -78,7 +77,7 @@
           <span class="w-28">{r.agent ? `a/${r.agent}` : r.kind}</span>
           <span class="mono flex-1 text-fg-2">{r.card ?? ""}</span>
           <span class="w-28 text-muted">{time(r.started_at)}</span>
-          <span class="num w-16 text-right text-muted">{duration(between(r.started_at, r.finished_at))}</span>
+          <span class="num w-16 text-right text-muted">{r.finished_at ? duration(between(r.started_at, r.finished_at)) : r.started_at ? "running" : "—"}</span>
           <span class="num w-16 text-right">{usd(r.cost_usd)}</span>
         </button>
       {:else}<EmptyState title="No runs yet." />{/each}

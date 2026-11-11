@@ -8,7 +8,7 @@ export const GET = async ({ url }) => {
   const like = `%${q}%`;
   const num = /#?(\d+)$/.exec(q)?.[1];
   const [cards, agents, projects, runs] = await Promise.all([
-    sql()<{ slug: string; number: number; title: string }[]>`SELECT p.slug, c.number, c.title FROM cards c JOIN projects p ON p.id = c.project_id WHERE c.title ILIKE ${like} OR (${num ?? null}::int IS NOT NULL AND c.number = ${num ? Number(num) : null}) ORDER BY c.updated_at DESC LIMIT 8`,
+    sql()<{ slug: string; number: number; title: string }[]>`SELECT p.slug, c.number, c.title FROM cards c JOIN projects p ON p.id = c.project_id WHERE c.deleted_at IS NULL AND (c.title ILIKE ${like} OR (${num ?? null}::int IS NOT NULL AND c.number = ${num ? Number(num) : null})) ORDER BY c.updated_at DESC LIMIT 8`,
     sql()<{ slug: string; name: string }[]>`SELECT slug, name FROM agents WHERE slug ILIKE ${like} OR name ILIKE ${like} LIMIT 5`,
     sql()<{ slug: string; name: string }[]>`SELECT slug, name FROM projects WHERE slug ILIKE ${like} OR name ILIKE ${like} LIMIT 5`,
     sql()<{ id: string; kind: string }[]>`SELECT id, kind FROM runs WHERE id::text LIKE ${`${q}%`} LIMIT 5`,

@@ -44,7 +44,7 @@
     </select>
     <label class="ml-auto flex items-center gap-1.5 text-[12px] text-fg-2"><input type="checkbox" bind:checked={auto} /> Auto-refresh</label>
   </div>
-  <div class="panel mb-3 px-2 pt-2"><RunsScatter runs={data.runs} onbrush={(r) => (brush = r)} /></div>
+  <div class="panel mb-3 px-2 pt-2"><RunsScatter runs={data.runs} onbrush={(r) => (brush = r)} onselect={show} /></div>
   <div class="mb-2 flex flex-wrap gap-2">
     <select class="input w-36" bind:value={status} aria-label="Status"><option value="">All statuses</option>{#each uniq("status") as s}<option>{s}</option>{/each}</select>
     <select class="input w-32" bind:value={kind} aria-label="Kind"><option value="">All kinds</option>{#each uniq("kind") as s}<option>{s}</option>{/each}</select>
@@ -54,14 +54,14 @@
     {#if brush}<button class="btn" onclick={() => (brush = null)}>Clear time range</button>{/if}
   </div>
   <div class="panel">
-    <div class="row h-8 text-[11px] text-muted uppercase hover:bg-transparent"><span class="w-6"></span><span class="w-20">Run</span><span class="w-16">Kind</span><span class="w-28">Agent</span><span class="flex-1">Card</span><span class="w-28">Started</span><span class="w-16 text-right">Dur.</span><span class="w-16 text-right">Tokens</span><span class="w-16 text-right">Cost</span></div>
+    <div class="row h-8 text-[11px] text-muted uppercase hover:bg-transparent"><span class="w-6"></span><span class="w-20">Run</span><span class="w-16">Kind</span><span class="w-28">Agent</span><span class="flex-1">Card</span><span class="w-32">Started</span><span class="w-16 text-right">Dur.</span><span class="w-16 text-right">Tokens</span><span class="w-16 text-right">Cost</span></div>
     {#each rows.slice(0, 300) as r (r.id)}
       <button class="row w-full text-left {open === r.id && drawer ? 'bg-surface-2' : ''}" onclick={() => show(r.id)}>
         <span class="w-6"><StatusBadge status={r.status} compact /></span><span class="mono w-20 text-muted">{r.id.slice(0, 8)}</span>
         <span class="w-16">{r.kind}</span><span class="mono w-28 truncate">{r.agent ? `a/${r.agent}` : "—"}</span>
         <span class="mono flex flex-1 items-center gap-2 text-fg-2">{r.card ?? r.project ?? ""}<ModelBadge model={r.model} /></span>
-        <span class="w-28 text-muted">{time(r.started_at ?? r.created_at)}</span>
-        <span class="num w-16 text-right text-muted">{duration(between(r.started_at, r.finished_at))}</span>
+        <span class="w-32 whitespace-nowrap text-muted">{time(r.started_at ?? r.created_at)}</span>
+        <span class="num w-16 text-right text-muted">{r.finished_at ? duration(between(r.started_at, r.finished_at)) : r.started_at ? "running" : "—"}</span>
         <span class="num w-16 text-right text-muted">{tokens(r.tokens)}</span><span class="num w-16 text-right">{usd(r.cost_usd)}</span>
       </button>
     {:else}<EmptyState title="No runs in this range." />{/each}

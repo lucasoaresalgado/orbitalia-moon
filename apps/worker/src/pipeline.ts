@@ -7,11 +7,11 @@ import {
   agents, agentVersions, cardEvent, cards, decisions, moveCard, plans, projects, runs, and, eq, inArray, getSetting, publish, SETTINGS,
   DEFAULT_MODELS, type ModelSettings,
 } from "@miniasys/db";
-import { textOf } from "@miniasys/llm";
 import { z } from "zod";
 import type { FinalStatus, RunRow } from "./agent/loop.ts";
 import { addNote } from "./knowledge.ts";
-import { callModel } from "./modelcall.ts";
+import { CardDeleted } from "./errors.ts";
+import { singleCall } from "./engine.ts";
 import { QUEUES, type Services } from "./services.ts";
 import type { CardRef, Workspaces } from "./workspaces.ts";
 
@@ -32,6 +32,7 @@ export class Pipeline {
     const [row] = await this.s.d.db.select().from(cards).innerJoin(projects, eq(projects.id, cards.projectId)).where(eq(cards.id, cardId));
     if (!row) throw new Error(`no card ${cardId}`);
     const { cards: card, projects: project } = row;
+    if (card.deletedAt) throw new CardDeleted(`card ${cardId} was deleted`);
     return { card, project, ref: { id: card.id, number: card.number, branch: card.branch!, projectSlug: project.slug, repo: project.repoFullName, baseBranch: project.defaultBranch } };
   }
 
@@ -72,15 +73,22 @@ export class Pipeline {
       const model = writer?.agent_versions.model ?? (await this.models()).brief_writer;
       const content = plan ? PlanContent.parse(plan.content) : null;
       const planCard = content?.milestones.flatMap((m) => m.cards).find((c) => c.key === card.planKey);
-      const { done } = await callModel(this.s, {
-        runId: null, scope: { projectId: project.id, cardId: card.id, agentId: writer?.agents.id ?? null }, model,
-        req: {
+      // a run row, so the call shows in Runs and the subscription engine has a sandbox to attach to
+      const [briefRun] = await this.s.d.db.insert(runs).values({ kind: "brief", cardId: card.id, projectId: project.id, agentVersionId: writer?.agent_versions.id ?? null, status: "running", model, startedAt: new Date() }).returning();
+      let out: { text: string };
+      try {
+        out = await singleCall(this.s, {
+          role: "brief_writer", runId: briefRun!.id, scope: { projectId: project.id, cardId: card.id, agentId: writer?.agents.id ?? null }, model,
           system: [{ text: writer?.agent_versions.systemPrompt ?? "Write a short self-contained brief for this card.", tier: "static" }],
-          messages: [{ role: "user", content: [{ type: "text", text: JSON.stringify({ plan: content ? { summary: content.summary, assumptions: content.assumptions, milestones: content.milestones.map((m) => ({ title: m.title, cards: m.cards.map((c) => c.title) })) } : null, card: planCard ?? { title: card.title, acceptance_criteria: card.acceptanceCriteria }, project: { name: project.name, description: project.description } }, null, 2) }] }],
-          tools: [], effort: "low", maxOutputTokens: 1500,
-        },
-      });
-      const brief = textOf(done.message).trim() || planCard?.description || card.title;
+          prompt: JSON.stringify({ plan: content ? { summary: content.summary, assumptions: content.assumptions, milestones: content.milestones.map((m) => ({ title: m.title, cards: m.cards.map((c) => c.title) })) } : null, card: planCard ?? { title: card.title, acceptance_criteria: card.acceptanceCriteria }, project: { name: project.name, description: project.description } }, null, 2),
+          effort: "low", maxOutputTokens: 1500,
+        });
+        await this.s.d.db.update(runs).set({ status: "succeeded", finishedAt: new Date(), summary: out.text.slice(0, 500) }).where(eq(runs.id, briefRun!.id));
+      } catch (e) {
+        await this.s.d.db.update(runs).set({ status: "failed", finishedAt: new Date(), error: (e as Error).message }).where(eq(runs.id, briefRun!.id));
+        throw e;
+      }
+      const brief = out.text.trim() || planCard?.description || card.title;
       await this.s.d.db.update(cards).set({ brief, updatedAt: new Date() }).where(eq(cards.id, card.id));
       await addNote(this.s, { projectId: project.id, sourceType: "brief", sourceId: card.id, content: `${card.title}\n\n${brief}` });
     }
@@ -127,7 +135,26 @@ export class Pipeline {
 
   async onRunFinished(run: RunRow, status: FinalStatus) {
     if (run.kind !== "agent" || !run.cardId) return;
-    if (status === "succeeded") await this.s.boss.send(QUEUES.cardChecks, { cardId: run.cardId, runId: run.id }, { singletonKey: run.cardId });
+    if (status !== "succeeded") return;
+    // notes Lucas left while it worked (the subscription engine can't take them mid-run): back to work first
+    const [pending] = await this.s.d.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM card_notes WHERE card_id = ${run.cardId} AND handled_at IS NULL`;
+    if ((pending?.n ?? 0) > 0) {
+      await this.startWork(run.cardId, { feedback: "Lucas left notes on this card while you worked; act on them before finishing." });
+      return;
+    }
+    await this.s.boss.send(QUEUES.cardChecks, { cardId: run.cardId, runId: run.id }, { singletonKey: run.cardId });
+  }
+
+  /** Lucas left a note: a running agent gets it at its next turn; an idle card goes back to work on it. */
+  async note(cardId: string) {
+    const { card, project } = await this.load(cardId);
+    const [active] = await this.s.d.db.select({ id: runs.id }).from(runs).where(and(eq(runs.cardId, cardId), inArray(runs.status, ACTIVE)));
+    if (active) return;
+    // backlog and ready cards read their notes when they start; a done card stays done
+    if (["backlog", "ready", "done"].includes(card.status)) return;
+    if (card.status !== "in_progress") await moveCard(this.s.d, cardId, "in_progress", "system", { note: "Lucas left a note" });
+    await this.startWork(cardId, { feedback: "Lucas left a note on this card (below). Act on it." });
+    await this.s.notifier.notify({ level: "info", title: `${cardPath(project.slug, card.number)} is working on your note`, link: `/cards/${project.slug}/${card.number}` });
   }
 
   async checks(cardId: string, runId: string) {
@@ -182,20 +209,18 @@ export class Pipeline {
     const [run] = await this.s.d.db.insert(runs).values({ kind: "review", cardId, projectId: project.id, agentVersionId: reviewer?.agent_versions.id ?? null, status: "running", model: reviewer?.agent_versions.model ?? models.reviewer, startedAt: new Date() }).returning();
     const criteria = (card.acceptanceCriteria as (string | { text: string })[]).map((c) => (typeof c === "string" ? c : c.text));
     try {
-      const { done } = await callModel(this.s, {
-        runId: run!.id, scope, model: run!.model!,
-        req: {
-          system: [{ text: reviewer?.agent_versions.systemPrompt ?? "Review this change.", tier: "static" }],
-          messages: [{ role: "user", content: [{ type: "text", text: [
-            `Card ${cardPath(project.slug, card.number)}: ${card.title}`, `Risk: ${level}`,
-            `## Brief\n${card.brief ?? ""}`, `## Acceptance criteria\n${criteria.map((c) => `- ${c}`).join("\n")}`,
-            `## Checks (passed)\n${checks}`, `## Diff stat\n${diff.stat}`, `## Diff\n${diff.text.slice(0, light ? 30_000 : 150_000)}`,
-          ].join("\n\n") }] }],
-          tools: [], effort: light ? "low" : "high", maxOutputTokens: light ? 1500 : 6000,
-          format: z.toJSONSchema(ReviewOutput) as Record<string, unknown>,
-        },
+      const out = await singleCall(this.s, {
+        role: "reviewer", runId: run!.id, scope, model: run!.model!,
+        system: [{ text: reviewer?.agent_versions.systemPrompt ?? "Review this change.", tier: "static" }],
+        prompt: [
+          `Card ${cardPath(project.slug, card.number)}: ${card.title}`, `Risk: ${level}`,
+          `## Brief\n${card.brief ?? ""}`, `## Acceptance criteria\n${criteria.map((c) => `- ${c}`).join("\n")}`,
+          `## Checks (passed)\n${checks}`, `## Diff stat\n${diff.stat}`, `## Diff\n${diff.text.slice(0, light ? 30_000 : 150_000)}`,
+        ].join("\n\n"),
+        effort: light ? "low" : "high", maxOutputTokens: light ? 1500 : 6000,
+        format: z.toJSONSchema(ReviewOutput) as Record<string, unknown>,
       });
-      const review = ReviewOutput.parse(JSON.parse(textOf(done.message)));
+      const review = ReviewOutput.parse(out.json);
       await this.s.d.db.update(runs).set({ status: "succeeded", summary: review.summary, finishedAt: new Date() }).where(eq(runs.id, run!.id));
       await cardEvent(this.s.d, cardId, "agent:reviewer", "review", review);
       await addNote(this.s, { projectId: project.id, sourceType: "review", sourceId: card.id, content: `${review.verdict}: ${review.summary}\n${review.comments.map((c) => `${c.file}:${c.line ?? ""} ${c.comment}`).join("\n")}` });
@@ -217,7 +242,11 @@ export class Pipeline {
 
   async openPr(cardId: string, reviewSummary: string) {
     const { card, project, ref } = await this.load(cardId);
-    if (!this.s.github || !project.repoFullName) throw new Error("GitHub is not configured");
+    if (!this.s.github || !project.repoFullName) {
+      await moveCard(this.s.d, cardId, "blocked", "system", { blockedReason: "needs_input", note: "approved by the reviewer; connect the GitHub App to push the branch and open the PR" });
+      await this.s.notifier.notify({ level: "warn", title: `${cardPath(project.slug, card.number)} is approved but can't open a PR`, body: "Connect the GitHub App (Settings → Connections), then resume the card.", link: "/settings#connections", ntfy: "default" });
+      return;
+    }
     await this.ws.push(ref);
     const [cost] = await this.s.d.sql<{ usd: string }[]>`SELECT COALESCE(sum(cost_usd), 0) AS usd FROM llm_calls WHERE card_id = ${cardId}`;
     const [checks] = await this.s.d.sql<{ payload: { output: string } }[]>`SELECT payload FROM card_events WHERE card_id = ${cardId} AND type = 'checks' ORDER BY id DESC LIMIT 1`;

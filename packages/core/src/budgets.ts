@@ -5,6 +5,9 @@
 export const BUDGET_SCOPES = ["global_day", "global_month", "project", "card", "meeting", "agent_day"] as const;
 export type BudgetScope = (typeof BUDGET_SCOPES)[number];
 
+/** What budgets count (Settings → Budgets): API dollars, or usage tokens (for the Claude subscription). */
+export type BudgetUnit = "usd" | "tokens";
+
 export interface BudgetRow {
   id: number;
   scope: BudgetScope;
@@ -27,6 +30,11 @@ export type CheckResult = { ok: true } | { ok: false; blocking: BudgetRow[] };
 export function check(rows: BudgetRow[], estimateUsd: number): CheckResult {
   const blocking = rows.filter((r) => r.spentUsd + r.reservedUsd + estimateUsd > r.limitUsd + 1e-9);
   return blocking.length ? { ok: false, blocking } : { ok: true };
+}
+
+/** What is left in the tightest budget (same unit as the rows), never below 0. */
+export function remaining(rows: BudgetRow[]): number {
+  return rows.length ? Math.max(0, Math.min(...rows.map((r) => r.limitUsd - r.spentUsd - r.reservedUsd))) : Infinity;
 }
 
 /** Period start for time-boxed scopes, in a timezone: the local midnight (day) or the first of the month. */

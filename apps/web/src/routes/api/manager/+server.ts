@@ -13,6 +13,12 @@ export const GET = async ({ cookies }) => {
   const where = project ? eq(managerMessages.projectId, project.id) : isNull(managerMessages.projectId);
   const rows = await db().select().from(managerMessages).where(where).orderBy(desc(managerMessages.id)).limit(60);
   const busy = await db().select({ id: runs.id }).from(runs).where(and(eq(runs.kind, "manager"), inArray(runs.status, ACTIVE), project ? eq(runs.projectId, project.id) : isNull(runs.projectId))).limit(1);
+  // the last run, when it failed after the last message: shown in the chat with a retry
+  const [lastRun] = await db().select({ id: runs.id, status: runs.status, error: runs.error, createdAt: runs.createdAt }).from(runs)
+    .where(and(eq(runs.kind, "manager"), project ? eq(runs.projectId, project.id) : isNull(runs.projectId))).orderBy(desc(runs.createdAt)).limit(1);
+  const lastMessageAt = rows[0]?.createdAt;
+  const failed = lastRun && ["failed", "timed_out"].includes(lastRun.status) && (!lastMessageAt || lastRun.createdAt >= lastMessageAt || rows[0]?.role === "user")
+    ? { runId: lastRun.id, error: lastRun.error ?? "the run failed" } : null;
   const pending = await db().select().from(approvals).where(and(eq(approvals.kind, "plan"), eq(approvals.status, "pending"))).orderBy(approvals.createdAt);
   return json({
     messages: rows.reverse().map((m) => ({ id: m.id, role: m.role, text: (m.content as { text: string }).text, model: m.model, costUsd: m.costUsd, createdAt: m.createdAt })),
@@ -20,6 +26,7 @@ export const GET = async ({ cookies }) => {
       .map((a) => ({ approvalId: a.id, ...(a.request as { planId: string; projectSlug: string; summary: string; cards: number }) }))
       .filter((p) => !project || p.projectSlug === project.slug),
     busy: busy.length > 0,
+    failed,
   });
 };
 
