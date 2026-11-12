@@ -30,6 +30,8 @@ export const projects = pgTable("projects", {
   checksNetwork: boolean("checks_network").notNull().default(false),
   status: text("status").notNull().default("active"),
   nextCardNumber: integer("next_card_number").notNull().default(1),
+  /** S3-compatible storage for its scripts (scope §26), besides its storage folder: endpoint, bucket, prefix, region, and the secret variables holding the keys */
+  storage: jsonb("storage"),
   createdAt: now("created_at"),
 });
 
@@ -51,6 +53,12 @@ export const agents = pgTable("agents", {
   name: text("name").notNull(),
   role: text("role").notNull(),
   description: text("description"),
+  /**
+   * internal: Orbitalia Moon runs it (versions, sandboxes, the worker loop). external: an
+   * identity a harness acts as through the API/MCP/CLI; it has no versions and the
+   * worker never starts a run for it.
+   */
+  runtime: text("runtime").notNull().default("internal"),
   activeVersionId: uuid("active_version_id"),
   createdAt: now("created_at"),
 });
@@ -145,14 +153,26 @@ export const meetings = pgTable("meetings", {
   id: uuid("id").primaryKey().defaultRandom(),
   projectId: uuid("project_id").references(() => projects.id),
   topic: text("topic").notNull(),
-  status: text("status").notNull(),
+  /** what the meeting should settle (markdown), shown to every participant */
+  agenda: text("agenda").notNull().default(""),
+  status: text("status").notNull(), // running | closing | closed
   round: integer("round").notNull().default(0),
   maxRounds: integer("max_rounds").notNull().default(3),
-  closedBy: text("closed_by"),
+  /** how long external participants (harnesses) get to post each round */
+  roundMinutes: integer("round_minutes").notNull().default(10),
+  roundDeadline: ts("round_deadline"),
+  createdBy: text("created_by").notNull().default("user"),
+  closedBy: text("closed_by"), // system_one | user | cap | empty | error
   minutes: text("minutes"),
   createdAt: now("created_at"),
   closedAt: ts("closed_at"),
 });
+
+export const meetingParticipants = pgTable("meeting_participants", {
+  meetingId: uuid("meeting_id").notNull().references(() => meetings.id),
+  agentId: uuid("agent_id").notNull().references(() => agents.id),
+  joinedAt: now("joined_at"),
+}, (t) => [uniqueIndex().on(t.meetingId, t.agentId)]);
 
 export const runs = pgTable("runs", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -173,6 +193,8 @@ export const runs = pgTable("runs", {
   costUsd: money("cost_usd").notNull().default(0),
   tokens: integer("tokens").notNull().default(0),
   summary: text("summary"),
+  /** what a script's main() returned (scope §26) */
+  result: jsonb("result"),
   error: text("error"),
   startedAt: ts("started_at"),
   finishedAt: ts("finished_at"),
@@ -281,11 +303,13 @@ export const meetingMessages = pgTable("meeting_messages", {
   meetingId: uuid("meeting_id").notNull().references(() => meetings.id),
   round: integer("round").notNull(),
   agentId: uuid("agent_id").references(() => agents.id),
-  kind: text("kind").notNull(),
+  kind: text("kind").notNull(), // system | turn | message | minutes
   toAgentId: uuid("to_agent_id").references(() => agents.id),
+  /** who wrote it: agent:<slug>, user, user:<token>, system */
+  actor: text("actor").notNull().default("system"),
   content: jsonb("content").notNull(),
   createdAt: now("created_at"),
-});
+}, (t) => [index().on(t.meetingId, t.id)]);
 
 /** The manager chat: one thread per project (null = "All"). */
 export const managerMessages = pgTable("manager_messages", {
@@ -298,6 +322,51 @@ export const managerMessages = pgTable("manager_messages", {
   model: text("model"),
   createdAt: now("created_at"),
 }, (t) => [index().on(t.projectId, t.id)]);
+
+// ------------------------------------------------------------------ journal and docs
+
+/**
+ * A project's journal: each step of the work, as Lucas, Luna, an internal agent
+ * or a harness logs it (scope §25). Embedded into notes so agents find it.
+ */
+export const journalEntries = pgTable("journal_entries", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  projectId: uuid("project_id").notNull().references(() => projects.id),
+  cardId: uuid("card_id").references(() => cards.id),
+  meetingId: uuid("meeting_id").references(() => meetings.id),
+  runId: uuid("run_id").references(() => runs.id),
+  actor: text("actor").notNull(),
+  kind: text("kind").notNull(), // step | decision | milestone | issue | note
+  title: text("title").notNull(),
+  body: text("body").notNull().default(""),
+  data: jsonb("data").notNull().default(sql`'{}'::jsonb`),
+  createdAt: now("created_at"),
+}, (t) => [index().on(t.projectId, t.id)]);
+
+/** A project's documents: markdown pages with every version kept. */
+export const docs = pgTable("docs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id),
+  slug: text("slug").notNull(),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  version: integer("version").notNull().default(1),
+  updatedBy: text("updated_by").notNull(),
+  createdAt: now("created_at"),
+  updatedAt: now("updated_at"),
+  deletedAt: ts("deleted_at"),
+}, (t) => [uniqueIndex().on(t.projectId, t.slug)]);
+
+export const docVersions = pgTable("doc_versions", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  docId: uuid("doc_id").notNull().references(() => docs.id),
+  version: integer("version").notNull(),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  actor: text("actor").notNull(),
+  note: text("note"),
+  createdAt: now("created_at"),
+}, (t) => [uniqueIndex().on(t.docId, t.version)]);
 
 // ------------------------------------------------------------------ budgets
 
@@ -366,6 +435,49 @@ export const secrets = pgTable("secrets", {
   lastUsedAt: ts("last_used_at"),
 });
 
+/**
+ * Variables scripts get as environment variables (scope §26): per project, or
+ * global (project_id null). A secret's value is sealed with the master key and
+ * never shown back by any door; every value is masked in run output.
+ */
+export const variables = pgTable("variables", {
+  id: serial("id").primaryKey(),
+  projectId: uuid("project_id").references(() => projects.id),
+  name: text("name").notNull(),
+  isSecret: boolean("is_secret").notNull().default(false),
+  /** a plain variable's value */
+  value: text("value"),
+  /** a secret's value, sealed */
+  ciphertext: bytea("ciphertext"),
+  description: text("description"),
+  updatedBy: text("updated_by").notNull(),
+  updatedAt: now("updated_at"),
+}, (t) => [unique("variables_scope_name").on(t.projectId, t.name).nullsNotDistinct()]);
+
+/**
+ * A project's scripts (scope §26): the code is a file under scripts/ in the
+ * project folder (versioned by git); this row holds how it runs and when.
+ */
+export const scripts = pgTable("scripts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id),
+  path: text("path").notNull(),
+  language: text("language").notNull(), // python | typescript | bash | sql
+  description: text("description"),
+  /** JSON Schema of main()'s arguments, read from the code on save */
+  argsSchema: jsonb("args_schema").notNull().default(sql`'{"type":"object","properties":{}}'::jsonb`),
+  network: boolean("network").notNull().default(false),
+  timeoutS: integer("timeout_s").notNull().default(300),
+  memMb: integer("mem_mb").notNull().default(1024),
+  /** cron, in the platform's time zone; runs only while schedule_enabled */
+  schedule: text("schedule"),
+  scheduleArgs: jsonb("schedule_args").notNull().default(sql`'{}'::jsonb`),
+  scheduleEnabled: boolean("schedule_enabled").notNull().default(false),
+  lastRunId: uuid("last_run_id"),
+  createdAt: now("created_at"),
+  updatedAt: now("updated_at"),
+}, (t) => [uniqueIndex().on(t.projectId, t.path)]);
+
 export const settings = pgTable("settings", {
   key: text("key").primaryKey(),
   value: jsonb("value").notNull(),
@@ -386,4 +498,22 @@ export const sessions = pgTable("sessions", {
   id: text("id").primaryKey(),
   expiresAt: ts("expires_at").notNull(),
   createdAt: now("created_at"),
+});
+
+/**
+ * Tokens for the API, the MCP server and the CLI (harness access). The database
+ * keeps only the SHA-256 of the token, like sessions. A token bound to an agent
+ * acts as that agent (actor agent:<slug>); otherwise it acts as Lucas (user:<name>).
+ */
+export const apiTokens = pgTable("api_tokens", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(),
+  tokenHash: text("token_hash").notNull().unique(),
+  /** the first characters, shown in lists so a token can be recognized */
+  prefix: text("prefix").notNull(),
+  access: text("access").notNull(), // read | write | admin
+  agentId: uuid("agent_id").references(() => agents.id),
+  createdAt: now("created_at"),
+  lastUsedAt: ts("last_used_at"),
+  revokedAt: ts("revoked_at"),
 });

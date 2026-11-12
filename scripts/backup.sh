@@ -15,7 +15,7 @@ file="$BACKUP_DIR/daily/platform_$stamp.dump"
 if command -v pg_dump >/dev/null 2>&1; then
   pg_dump -Fc --no-owner "$DATABASE_URL" > "$file.tmp"
 else
-  podman exec -i "${PG_CONTAINER:-infra_postgres_1}" pg_dump -Fc --no-owner -U platform platform > "$file.tmp"
+  podman exec -i "${PG_CONTAINER:-miniasys-postgres}" pg_dump -Fc --no-owner -U platform platform > "$file.tmp"
 fi
 mv "$file.tmp" "$file"
 

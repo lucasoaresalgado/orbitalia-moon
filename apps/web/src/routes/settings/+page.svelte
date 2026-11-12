@@ -2,18 +2,20 @@
   import StatusBadge from "#lib/components/StatusBadge.svelte";
   import BudgetUnitSwitch from "#lib/components/BudgetUnitSwitch.svelte";
   import { time } from "#lib/format.ts";
+  import Variables from "#lib/components/Variables.svelte";
   let { data, form } = $props();
-  const sections = ["models", "subscription", "prices", "budgets", "connections", "secrets", "sandbox", "schedules"];
-  const engineRoles: [keyof typeof data.engines, string][] = [["manager", "Manager (Iacy)"], ["worker", "Workers"], ["reviewer", "Reviewer"], ["brief_writer", "Brief writer"]];
+  const sections = ["models", "subscription", "prices", "budgets", "connections", "secrets", "variables", "tokens", "sandbox", "schedules"];
+  const engineRoles: [keyof typeof data.engines, string][] = [["manager", "Manager (Luna)"], ["worker", "Workers"], ["reviewer", "Reviewer"], ["brief_writer", "Brief writer"]];
   const tokenFmt = (n: number | null | undefined) => (n == null ? "" : String(n));
   const roles: [keyof typeof data.models, string][] = [
-    ["manager", "Manager (Iacy)"], ["brief_writer", "Brief writer"], ["worker_default", "Worker (cheap tier)"], ["worker_strong", "Worker (strong tier)"],
-    ["reviewer", "Reviewer"], ["security", "Security"], ["decisions_fallback", "Decisions fallback"], ["colibri_decision_model", "Colibri decision model (empty: Haiku only)"],
+    ["manager", "Manager (Luna)"], ["brief_writer", "Brief writer"], ["worker_default", "Worker (cheap tier)"], ["worker_strong", "Worker (strong tier)"],
+    ["reviewer", "Reviewer"], ["security", "Security"], ["decisions_fallback", "Decisions fallback"], ["colibri_decision_model", "Colibri decision model (empty: off)"],
+    ["local_decision_model", "Local decision model on Ollama (empty: off)"],
   ];
   const budgetLabels: Record<string, string> = { global_month: "Global per month", global_day: "Global per day", card: "Per card", meeting: "Per meeting", agent_day: "Per agent per day" };
 </script>
 
-<svelte:head><title>Settings · Miniasys</title></svelte:head>
+<svelte:head><title>Settings · Orbitalia Moon</title></svelte:head>
 <div class="flex">
   <nav class="sticky top-0 h-fit w-44 shrink-0 p-4" aria-label="Settings sections">
     {#each sections as s}<a href="#{s}" class="block rounded px-2 py-1 text-fg-2 capitalize hover:bg-surface-2 hover:text-fg">{s}</a>{/each}
@@ -58,7 +60,7 @@
           <input name="token" type="password" class="input mono" placeholder="sk-ant-…" autocomplete="off" aria-label="Claude subscription token" />
           <button class="btn btn-primary whitespace-nowrap">{data.subscription ? "Replace token" : "Connect"}</button>
         </form>
-        <p class="text-[12px] text-muted">How it works: roles on the subscription run the real Claude Code inside the sandbox container, signed in with this token; Miniasys never calls the API with it. That container needs network access to reach Anthropic, and the token is visible to processes in it. Mid-run tool approvals and questions aren't available on this engine (Claude Code acts on its own inside the sandbox). Usage counts against your plan's limits; count budgets in tokens to cap it.</p>
+        <p class="text-[12px] text-muted">How it works: roles on the subscription run the real Claude Code inside the sandbox container, signed in with this token; Orbitalia Moon never calls the API with it. That container needs network access to reach Anthropic, and the token is visible to processes in it. Mid-run tool approvals and questions aren't available on this engine (Claude Code acts on its own inside the sandbox). Usage counts against your plan's limits; count budgets in tokens to cap it.</p>
       </div>
       <form method="POST" action="?/engines" class="panel mt-3 space-y-2 p-3">
         <div class="label">Engine per role</div>
@@ -129,6 +131,37 @@
       <form method="POST" action="?/secret" class="mt-2 grid grid-cols-4 gap-2">
         <input name="name" class="input mono" placeholder="NTFY_TOKEN" aria-label="Name" /><input name="value" type="password" class="input" placeholder="value" autocomplete="off" aria-label="Value" />
         <input name="tools" class="input mono" placeholder="allowed tools, comma-separated" aria-label="Allowed tools" /><button class="btn">Set secret</button>
+      </form>
+    </section>
+
+    <section id="variables">
+      <h2 class="mb-2 text-[14px] font-semibold">Variables <span class="text-[12px] font-normal text-muted">global: every project's scripts get them (a project's own variable of the same name wins)</span></h2>
+      <Variables rows={data.variables} />
+    </section>
+
+    <section id="tokens">
+      <h2 class="mb-2 text-[14px] font-semibold">API tokens <span class="text-[12px] font-normal text-muted">for harnesses, the CLI and the MCP server; a token bound to an agent acts as that agent</span></h2>
+      {#if form?.token}
+        <div class="mb-2 border-l-2 border-ok pl-2 text-[12px]">
+          <p class="text-ok">Token <span class="mono">{form.tokenName}</span> created. Copy it now: it won't be shown again.</p>
+          <p class="mono mt-1 select-all break-all text-fg">{form.token}</p>
+          <p class="mt-1 text-muted">MCP: <span class="mono select-all">claude mcp add --transport http miniasys {data.publicUrl}/mcp --header "Authorization: Bearer {form.token}"</span></p>
+          <p class="text-muted">CLI: <span class="mono select-all">miniasys login --url {data.publicUrl} --token {form.token}</span></p>
+        </div>
+      {/if}
+      <div class="panel">
+        {#each data.tokens as t}
+          <div class="row" class:opacity-50={!!t.revokedAt}><span class="mono w-48">{t.name}</span><span class="mono text-muted">{t.prefix}…</span>
+            <span class="flex-1 text-[12px] text-muted">{t.access}{t.agent ? ` · acts as a/${t.agent}` : ""}</span>
+            <span class="text-[12px] text-muted">{t.revokedAt ? `revoked ${time(t.revokedAt)}` : t.lastUsedAt ? `used ${time(t.lastUsedAt)}` : "never used"}</span>
+            {#if !t.revokedAt}<form method="POST" action="?/revokeToken"><input type="hidden" name="name" value={t.name} /><button class="btn btn-danger">Revoke</button></form>{/if}</div>
+        {:else}<p class="p-3 text-muted">No tokens. Create one here, or run <span class="mono">miniasys login</span>.</p>{/each}
+      </div>
+      <form method="POST" action="?/createToken" class="mt-2 grid grid-cols-4 gap-2">
+        <input name="name" class="input mono" placeholder="claude-code-laptop" aria-label="Token name" />
+        <select name="access" class="input" aria-label="Access"><option value="write">write</option><option value="read">read</option><option value="admin">admin</option></select>
+        <select name="agent" class="input" aria-label="Acts as agent"><option value="">acts as you</option>{#each data.agentSlugs as a}<option value={a}>acts as a/{a}</option>{/each}</select>
+        <button class="btn">Create token</button>
       </form>
     </section>
 

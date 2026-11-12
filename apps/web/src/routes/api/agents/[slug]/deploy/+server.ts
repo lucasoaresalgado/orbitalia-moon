@@ -1,11 +1,4 @@
 import { json } from "@sveltejs/kit";
-import { agentBySlug, deploy } from "#lib/server/agents.ts";
-import { userAudit } from "#lib/server/audit.ts";
+import { call } from "#lib/server/ops/web.ts";
 
-export const POST = async ({ params, request }) => {
-  const a = await agentBySlug(params.slug);
-  const { change_note } = (await request.json()) as { change_note?: string };
-  const v = await deploy(a.id, change_note ?? "");
-  await userAudit("agent.deploy", { type: "agent", id: a.slug }, { version: v.version, change_note });
-  return json({ version: v.version });
-};
+export const POST = async ({ params, request, locals }) => json(await call(locals, "agents.deploy", { ...(await request.json()), agent: params.slug }));

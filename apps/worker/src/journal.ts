@@ -13,6 +13,7 @@ export type RunEvent =
   | { type: "approval"; turn: number; id: string; approvalId: string; kind: string }
   | { type: "usage"; turn: number; model: string; input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number }
   | { type: "compaction"; turn: number; tokensBefore: number }
+  | { type: "log"; text: string; stream: "stdout" | "stderr" }
   | { type: "error"; message: string };
 
 export class Journal {

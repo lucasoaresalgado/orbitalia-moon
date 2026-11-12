@@ -1,10 +1,4 @@
 import { json } from "@sveltejs/kit";
-import { agentBySlug, saveDraft } from "#lib/server/agents.ts";
-import { userAudit } from "#lib/server/audit.ts";
+import { call } from "#lib/server/ops/web.ts";
 
-export const PUT = async ({ params, request }) => {
-  const a = await agentBySlug(params.slug);
-  const id = await saveDraft(a.id, await request.json());
-  await userAudit("agent.draft", { type: "agent", id: a.slug });
-  return json({ id });
-};
+export const PUT = async ({ params, request, locals }) => json(await call(locals, "agents.draft", { ...(await request.json()), agent: params.slug }));

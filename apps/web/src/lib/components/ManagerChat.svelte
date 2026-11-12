@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The conversation with Iacy (scope §18.5 Manager): scoped by the project
+  // The conversation with Luna (scope §18.5 Manager): scoped by the project
   // switcher; plan proposals show as a structured block with Approve / Reject.
   import { onMount, tick } from "svelte";
   import { Send, Check, X, LoaderCircle } from "@lucide/svelte";
@@ -68,7 +68,7 @@
     }
   }
   async function decide(p: Plan, decision: "approve" | "reject") {
-    const comment = decision === "reject" ? (prompt("Why? (Iacy reads this)") ?? "") : "";
+    const comment = decision === "reject" ? (prompt("Why? (Luna reads this)") ?? "") : "";
     await api(`/api/approvals/${p.approvalId}`, { body: { decision, comment } });
     await load();
   }
@@ -84,7 +84,7 @@
   <div bind:this={list} class="min-h-0 flex-1 space-y-3 overflow-y-auto {dense ? 'p-3' : 'mx-auto w-full max-w-3xl p-5'}">
     {#if !messages.length}
       <div class="py-8 text-center text-muted">
-        <div class="text-fg-2">Talk to Iacy{scope ? ` about p/${scope.slug}` : ""}.</div>
+        <div class="text-fg-2">Talk to Luna{scope ? ` about p/${scope.slug}` : ""}.</div>
         <div class="mt-1 text-[12px]">Ask for a plan, the status, or what is blocked. Try <span class="mono">/plan</span>, <span class="mono">/status</span>.</div>
       </div>
     {/if}
@@ -109,10 +109,10 @@
         </div>
       </div>
     {/each}
-    {#if busy}<div class="flex items-center gap-2 text-muted"><LoaderCircle size={13} class="animate-spin" /> Iacy is working…</div>{/if}
+    {#if busy}<div class="flex items-center gap-2 text-muted"><LoaderCircle size={13} class="animate-spin" /> Luna is working…</div>{/if}
     {#if failed}
       <div class="border-l-2 border-bad pl-3 text-[12.5px]">
-        <div class="text-bad">Iacy couldn't answer: {failed.error}</div>
+        <div class="text-bad">Luna couldn't answer: {failed.error}</div>
         <div class="mt-1 flex gap-2">
           <button class="btn" onclick={retry}>Retry</button>
           <a class="btn" href="/runs/{failed.runId}">Open run</a>
@@ -124,7 +124,7 @@
   {#if error}<div class="border-l-2 border-bad px-3 py-1 text-[12px] text-bad">{error}</div>{/if}
   <form class="border-t border-line p-2 {dense ? '' : 'mx-auto w-full max-w-3xl'}" onsubmit={send}>
     <div class="flex items-end gap-2">
-      <textarea class="input max-h-40 min-h-[34px] resize-none" rows="1" placeholder="Message Iacy…  (Enter sends, Shift+Enter newline)" bind:value={text} onkeydown={keydown}></textarea>
+      <textarea class="input max-h-40 min-h-[34px] resize-none" rows="1" placeholder="Message Luna…  (Enter sends, Shift+Enter newline)" bind:value={text} onkeydown={keydown}></textarea>
       <button class="btn btn-primary h-[34px]" disabled={!text.trim() || busy} aria-label="Send"><Send size={14} /></button>
     </div>
   </form>

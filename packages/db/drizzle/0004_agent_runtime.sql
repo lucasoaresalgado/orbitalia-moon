@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ADD COLUMN "runtime" text DEFAULT 'internal' NOT NULL;

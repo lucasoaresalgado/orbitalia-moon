@@ -26,6 +26,12 @@ const Env = z.object({
   CONTAINER_RUNTIME: z.enum(["podman", "docker"]).default("podman"),
   SANDBOX_IMAGE: z.string().default("localhost/agent-sandbox:dev"),
   WORKSPACES_DIR: z.string().default("~/miniasys/workspaces"),
+  /** each project's code: a git repository at <dir>/<slug> (scope §26) */
+  PROJECTS_DIR: z.string().default("~/miniasys/projects"),
+  /** each project's storage folder, mounted at /storage in script runs */
+  STORAGE_DIR: z.string().default("~/miniasys/storage"),
+  /** dependency caches for script runs (pip/npm installs, by content hash) */
+  DEPS_DIR: z.string().default("~/miniasys/deps"),
   LAKEHOUSE_DIR: z.string().default("/mnt/data/lakehouse"),
   /** where each agent's cortex map lives: <dir>/<agent>_ctx.parquet (default: <LAKEHOUSE_DIR>/cortex) */
   CORTEX_DIR: z.string().optional(),
@@ -39,6 +45,8 @@ const Env = z.object({
   NTFY_TOPIC: z.string().optional(),
   MASTER_KEY_FILE: z.string().optional(),
   APP_PASSWORD_HASH: z.string().optional(),
+  /** the same hash, read from a file, so it can live with the other secrets */
+  APP_PASSWORD_HASH_FILE: z.string().optional(),
   TIMEZONE: z.string().default("America/Sao_Paulo"),
 });
 
@@ -59,6 +67,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     containerRuntime: e.CONTAINER_RUNTIME,
     sandboxImage: e.SANDBOX_IMAGE,
     workspacesDir: expandHome(e.WORKSPACES_DIR),
+    projectsDir: expandHome(e.PROJECTS_DIR),
+    storageDir: expandHome(e.STORAGE_DIR),
+    depsDir: expandHome(e.DEPS_DIR),
     lakehouseDir: expandHome(e.LAKEHOUSE_DIR),
     cortexDir: expandHome(e.CORTEX_DIR ?? `${e.LAKEHOUSE_DIR.replace(/\/$/, "")}/cortex`),
     backupDir: expandHome(e.BACKUP_DIR),
@@ -69,7 +80,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       : null,
     ntfy: e.NTFY_TOPIC ? { url: e.NTFY_URL, topic: e.NTFY_TOPIC } : null,
     masterKey: readSecretFile(e.MASTER_KEY_FILE),
-    passwordHash: e.APP_PASSWORD_HASH ?? null,
+    passwordHash: e.APP_PASSWORD_HASH || readSecretFile(e.APP_PASSWORD_HASH_FILE),
     timeZone: e.TIMEZONE,
   };
 }

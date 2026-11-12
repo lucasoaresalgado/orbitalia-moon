@@ -2,7 +2,7 @@
 # The web app (SvelteKit, adapter-node), bound to 127.0.0.1:3000.
 # Build first: pnpm --filter @miniasys/web build
 [Unit]
-Description=Miniasys web
+Description=Orbitalia Moon web
 After=network-online.target
 
 [Service]

@@ -18,7 +18,7 @@
   const gb = (n: number | null) => (n == null ? "—" : `${n.toFixed(1)} GB`);
 </script>
 
-<svelte:head><title>System · Miniasys</title></svelte:head>
+<svelte:head><title>System · Orbitalia Moon</title></svelte:head>
 <div class="mx-auto max-w-5xl space-y-4 p-6">
   <div class="flex items-center gap-2">
     <h2 class="text-[15px] font-semibold">System</h2>

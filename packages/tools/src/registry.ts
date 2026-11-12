@@ -29,6 +29,15 @@ export interface BoardApi {
   notifyUser(level: "info" | "warn" | "critical", message: string): Promise<void>;
   proposePlan(plan: unknown): Promise<{ approvalId: string; planId: string }>;
   listCards(filter: { status?: string | undefined }): Promise<{ path: string; title: string; status: string; blockedReason: string | null }[]>;
+  /** the project's journal and docs (scope §25) */
+  logStep(e: { kind: "step" | "decision" | "milestone" | "issue" | "note"; title: string; body: string }): Promise<{ id: number }>;
+  listDocs(): Promise<{ slug: string; title: string; version: number; updatedBy: string }[]>;
+  readDoc(slug: string, version?: number): Promise<{ slug: string; title: string; body: string; version: number } | null>;
+  writeDoc(d: { slug: string; title?: string; body: string; baseVersion?: number; note?: string }): Promise<{ version: number; unchanged: boolean }>;
+  /** starts a meeting on the run's project (scope §9) */
+  callMeeting(m: { topic: string; agenda: string; participants: string[]; maxRounds?: number }): Promise<{ meetingId: string }>;
+  /** runs one of the project's saved scripts and waits for it (scope §26) */
+  runScript(path: string, args: Record<string, unknown>): Promise<{ runId: string; status: string; result: unknown; error: string | null; output: string }>;
 }
 
 export interface ToolContext {

@@ -1,12 +1,11 @@
 // Lucas's decisions in the inbox (scope §8.9, §12): each one resumes the run
 // that waited for it.
 import { error } from "@sveltejs/kit";
-import { approvals, approvePlan, budgets, plans, runs, eq, inArray, sql as dsql } from "@miniasys/db";
+import { approvals, approvePlan, budgets, moveCard, plans, runs, eq, inArray, sql as dsql } from "@miniasys/db";
 import { CHANNELS } from "@miniasys/core";
-import { publish } from "@miniasys/db";
+import { audit, publish, type Actor } from "@miniasys/db";
 import { database, db, sql } from "./db.ts";
 import { sendJob, wakeWorker } from "./jobs.ts";
-import { userAudit } from "./audit.ts";
 
 export interface Decision {
   decision: "approve" | "reject";
@@ -19,7 +18,7 @@ export interface Decision {
   raiseTokens?: number;
 }
 
-export async function decide(id: string, d: Decision) {
+export async function decide(id: string, d: Decision, actor: Actor = "user") {
   const [ap] = await db().select().from(approvals).where(eq(approvals.id, id));
   if (!ap) error(404, "no such approval");
   if (ap.status !== "pending") error(409, `already ${ap.status}`);
@@ -33,6 +32,11 @@ export async function decide(id: string, d: Decision) {
       await sendJob("plan.approved", { planId }, planId);
       response = { ...response, cards: ids.length };
     } else await db().update(plans).set({ status: "rejected" }).where(eq(plans.id, planId));
+  } else if (ap.kind === "merge") {
+    // the card's branch goes into the project folder (the worker merges); a rejected merge sends the card back to Lucas
+    const cardId = req.cardId as string;
+    if (d.decision === "approve") await sendJob("card.merge", { cardId, actor }, cardId);
+    else await moveCard(database(), cardId, "blocked", actor, { blockedReason: "needs_input", note: `merge rejected${d.comment ? `: ${d.comment}` : ""}` }).catch(() => {});
   } else if (ap.kind === "question") {
     if (d.decision === "approve" && !d.answer?.trim()) error(400, "an answer is needed");
     response = { ...response, answer: d.answer ?? null };
@@ -53,7 +57,7 @@ export async function decide(id: string, d: Decision) {
   }
 
   await db().update(approvals).set({ status: d.decision === "approve" ? "approved" : "rejected", response, decidedAt: new Date() }).where(eq(approvals.id, id));
-  await userAudit(`approval.${d.decision}`, { type: "approval", id }, { kind: ap.kind, ...response });
+  await audit(db(), actor, `approval.${d.decision}`, { type: "approval", id }, { kind: ap.kind, ...response });
 
   // the run that waited goes on; a budget raise that wasn't granted ends it
   if (ap.runId) {

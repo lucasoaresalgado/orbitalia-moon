@@ -10,7 +10,7 @@
   });
 </script>
 
-<svelte:head><title>New project · Miniasys</title></svelte:head>
+<svelte:head><title>New project · Orbitalia Moon</title></svelte:head>
 <form method="POST" class="mx-auto max-w-xl space-y-4 p-6">
   <h2 class="text-[15px] font-semibold">New project</h2>
   {#if form?.error}<p class="border-l-2 border-bad pl-2 text-bad">{form.error}</p>{/if}

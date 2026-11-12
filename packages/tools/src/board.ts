@@ -171,4 +171,78 @@ export const searchNotes = defineTool({
   },
 });
 
-export const BOARD_TOOLS = [updateCard, addCardLog, comment, requestHumanInput, notifyUser, createCards, listCards, loadSkill, searchNotes, cortexSearch, cortexRead, limbicRemember, limbicForget];
+
+// ------------------------------------------------------------------ journal and docs (scope §25)
+
+export const logStep = defineTool({
+  name: "log_step",
+  description:
+    "Log a step in the project's journal: something done, decided, reached or found, worth keeping in the project's history (not routine progress: that's add_card_log). kind: step | decision | milestone | issue | note. The body is markdown: what, why, result.",
+  input: z.object({ kind: z.enum(["step", "decision", "milestone", "issue", "note"]).default("step"), title: z.string().min(1).max(200), body: z.string().max(20_000).default("") }),
+  risk: "low",
+  execute: async (i, ctx) => {
+    const r = await ctx.board.logStep(i);
+    return ok(`logged in the journal (#${r.id})`);
+  },
+});
+
+export const listDocs = defineTool({
+  name: "list_docs",
+  description: "List the project's documents (slug, title, version).",
+  input: z.object({}),
+  risk: "low",
+  execute: async (_i, ctx) => {
+    const docs = await ctx.board.listDocs();
+    return ok(docs.length ? docs.map((d) => `${d.slug} (v${d.version}): ${d.title}`).join("\n") : "no docs yet");
+  },
+});
+
+export const readDoc = defineTool({
+  name: "read_doc",
+  description: "Read one of the project's documents (markdown) by slug; note its version if you will change it.",
+  input: z.object({ slug: z.string().min(1).max(80), version: z.number().int().min(1).optional() }),
+  risk: "low",
+  execute: async (i, ctx) => {
+    const d = await ctx.board.readDoc(i.slug, i.version);
+    return d ? { content: `# ${d.title} (v${d.version})\n\n${d.body}`, summary: `read ${d.slug} v${d.version}` } : ok(`no doc ${i.slug}`);
+  },
+});
+
+export const writeDoc = defineTool({
+  name: "write_doc",
+  description:
+    "Create or rewrite one of the project's documents (the whole markdown body; each save is a new version). Pass base_version (the version you read, 0 for a new doc) so you never overwrite a newer change; say what changed in note.",
+  input: z.object({ slug: z.string().regex(/^[a-z0-9][a-z0-9-/]{0,80}$/), title: z.string().min(1).max(200).optional(), body: z.string().max(200_000), base_version: z.number().int().min(0).optional(), note: z.string().max(500).optional() }),
+  risk: "low",
+  execute: async (i, ctx) => {
+    const r = await ctx.board.writeDoc({ slug: i.slug, body: i.body, ...(i.title ? { title: i.title } : {}), ...(i.base_version !== undefined ? { baseVersion: i.base_version } : {}), ...(i.note ? { note: i.note } : {}) });
+    return ok(r.unchanged ? `${i.slug} unchanged (v${r.version})` : `${i.slug} saved as v${r.version}`);
+  },
+});
+
+export const callMeeting = defineTool({
+  name: "call_meeting",
+  description:
+    "Call a meeting of agents on the current project to settle something together (conflicting cards, a design choice, blockers). Round 1 every participant gives an update; then those asked questions answer. It closes with minutes, and its action items become cards.",
+  input: z.object({ topic: z.string().min(3).max(200), agenda: z.string().max(4000).default(""), participants: z.array(z.string().min(1)).min(1).max(8).describe("agent slugs"), max_rounds: z.number().int().min(1).max(6).default(3) }),
+  risk: "medium",
+  execute: async (i, ctx) => {
+    const r = await ctx.board.callMeeting({ topic: i.topic, agenda: i.agenda, participants: i.participants, maxRounds: i.max_rounds });
+    return ok(`meeting started (${r.meetingId}); its minutes and cards arrive when it closes`);
+  },
+});
+
+export const runScript = defineTool({
+  name: "run_script",
+  description:
+    "Run one of the project's saved scripts (scripts/<name> in the project's code, as merged into its base branch) with arguments, and wait for it: its result, status and the end of its output. It runs with the project's variables (secrets come back masked as ***) and storage.",
+  input: z.object({ script: z.string().min(1).max(300).describe('e.g. "etl.py" or "scripts/etl.py"'), args: z.record(z.string(), z.unknown()).default({}) }),
+  risk: "medium",
+  execute: async (i, ctx) => {
+    const r = await ctx.board.runScript(i.script.startsWith("scripts/") ? i.script : `scripts/${i.script}`, i.args);
+    const body = JSON.stringify({ status: r.status, result: r.result, error: r.error, output: r.output.slice(-4000) }, null, 1);
+    return { content: body, summary: `${i.script}: ${r.status}` };
+  },
+});
+
+export const BOARD_TOOLS = [updateCard, addCardLog, comment, requestHumanInput, notifyUser, createCards, listCards, loadSkill, searchNotes, cortexSearch, cortexRead, limbicRemember, limbicForget, logStep, listDocs, readDoc, writeDoc, callMeeting, runScript];

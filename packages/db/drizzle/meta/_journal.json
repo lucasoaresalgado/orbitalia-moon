@@ -22,6 +22,41 @@
       "when": 1794419630052,
       "tag": "0002_cortex_limbic_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794495548619,
+      "tag": "0003_api_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794496464413,
+      "tag": "0004_agent_runtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794496652822,
+      "tag": "0005_journal_docs",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794497020863,
+      "tag": "0006_meetings",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794502492467,
+      "tag": "0007_scripts_variables",
+      "breakpoints": true
     }
   ]
 }

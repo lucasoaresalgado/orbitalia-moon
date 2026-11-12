@@ -1,4 +1,4 @@
-# Miniasys — Technical & Functional Scope
+# Orbitalia Moon — Technical & Functional Scope
 
 | | |
 |---|---|
@@ -6,7 +6,7 @@
 | **Date** | 2026-11-11 |
 | **Owner** | Lucas Salgado |
 | **Type** | Personal project, single user, self-hosted |
-| **Name** | Miniasys (`miniasys` in code, paths and repo) |
+| **Name** | Orbitalia Moon (`miniasys` in code, paths and repo) |
 
 ---
 
@@ -36,12 +36,14 @@
 22. [Roadmap and phases](#22-roadmap-and-phases)
 23. [Risks](#23-risks)
 24. [Open decisions](#24-open-decisions)
+25. [Harness access: API, MCP and CLI](#25-harness-access-api-mcp-and-cli)
+26. [Project code, scripts, variables and storage](#26-project-code-scripts-variables-and-storage)
 
 ---
 
 ## 1. Summary
 
-Miniasys is a self-hosted web platform where an **AI manager**, Iacy (Claude Opus 5.5), is the single point of contact. It turns requests into plans, splits plans into kanban cards, and delegates the cards to configurable **worker agents**. Workers write and run code inside **ephemeral sandbox containers**, a **reviewer** (Claude Sonnet 5.5) checks their output against deterministic test results, and finished code reaches GitHub only as a **pull request that only Lucas can merge**.
+Orbitalia Moon is a self-hosted web platform where an **AI manager**, Luna (Claude Opus 5.5), is the single point of contact. It turns requests into plans, splits plans into kanban cards, and delegates the cards to configurable **worker agents**. Workers write and run code inside **ephemeral sandbox containers**, a **reviewer** (Claude Sonnet 5.5) checks their output against deterministic test results, and finished code reaches GitHub only as a **pull request that only Lucas can merge**.
 
 Every action is recorded: card activity, agent transcripts, tool calls, sandbox output, decisions, tokens and cost. A cost layer **enforces** budgets before each model call instead of only reporting them. Cheap, frequent decisions (routing, triage, risk, "is the meeting done?") go to a **local System One decision model via Colibri**, with Claude Haiku 5.5 as fallback. A **pocket lakehouse** (DuckDB over Parquet on local disk) gives agents read-only data access, and Windmill joins later as the pipeline engine once its MCP access is secured.
 
@@ -51,13 +53,13 @@ Everything runs on one Fedora laptop. The heavy language models run on Anthropic
 
 ### The name
 
-**Miniasys** combines three parts:
+**Orbitalia Moon** combines three parts:
 
-- **Iacy** (also written Jaci or Iaci): the moon in Tupi-Guarani mythology. In Miniasys, Iacy is the manager agent at the center of the system.
-- **mini + s**: the agents are small moons that orbit, and answer to, Iacy.
+- **Luna** (also written Jaci or Iaci): the moon in Tupi-Guarani mythology. In Orbitalia Moon, Luna is the manager agent at the center of the system.
+- **mini + s**: the agents are small moons that orbit, and answer to, Luna.
 - **IA + sys**: *Inteligência Artificial* (hidden in the middle: min**ia**sys), and *system*.
 
-The manager agent is therefore named **Iacy** (`a/iacy`) throughout the platform.
+The manager agent is therefore named **Luna** (`a/luna`) throughout the platform.
 
 ---
 
@@ -599,6 +601,17 @@ create table sessions (
 
 `security_findings` (Phase 5) and Windmill tables (Phase 4) are added in their phases.
 
+### Added for meetings and harness access (2026-11-12)
+
+The SQL above is the original design; `packages/db/src/schema.ts` is the source of truth. Since then:
+
+- `agents.runtime` — `internal` | `external` ([§25](#25-harness-access-api-mcp-and-cli)).
+- `api_tokens` — name, SHA-256 of the token, prefix, access (`read` | `write` | `admin`), optional `agent_id`, last use, revoked.
+- `journal_entries` — project, optional card/meeting/run, actor, kind, title, markdown body, data.
+- `docs`, `doc_versions` — a project's markdown pages and every version (actor, note).
+- `scripts` (one per script file: language, args schema, network, timeout, memory, schedule), `variables` (per project or global; plain value or sealed secret), `projects.storage` (S3 settings), `runs.result`.
+- `meeting_participants`; `meetings` gains `agenda`, `round_minutes`, `round_deadline`, `created_by`; `meeting_messages` gains `actor` (kinds `system`, `turn`, `message`, `minutes`).
+
 ---
 
 ## 8. Agent system
@@ -609,7 +622,7 @@ Model IDs live in configuration (Settings → Models), never in code.
 
 | Role | Default model | Does | Doesn't |
 |---|---|---|---|
-| **Manager — Iacy** (`a/iacy`) | `claude-opus-5-5` | Talks to Lucas, writes plans, splits work into cards, answers escalations, writes the daily report, calls meetings. | Write code or run tools other than board and notification tools. |
+| **Manager — Luna** (`a/luna`) | `claude-opus-5-5` | Talks to Lucas, writes plans, splits work into cards, answers escalations, writes the daily report, calls meetings. | Write code or run tools other than board and notification tools. |
 | **Brief writer** | `claude-haiku-5-5` | Turns a plan into one short, self-contained brief per card. Writes meeting minutes. Compacts long transcripts. | Make decisions. |
 | **Workers** (e.g. `a/dev`, `a/data`, `a/research`) | `claude-haiku-5-5` or `claude-sonnet-5-5`, chosen per card by System One | Execute a card: read/write workspace files, run code in sandboxes, query the lakehouse, commit. | Touch anything outside their card workspace; merge; deploy. |
 | **Reviewer** | `claude-sonnet-5-5` | Reviews diffs plus deterministic check results; approves or requests changes with specific comments. | See the worker's reasoning (fresh context on purpose). |
@@ -718,7 +731,7 @@ Every decision has a typed output, a confidence threshold and a safe default.
 
 Rules:
 
-- **Fallback path:** if Colibri is down, slow (p95 > 1 s) or not yet installed, the same decision goes to Haiku with a JSON schema. The calling code doesn't know which engine answered; the `decisions.engine` column does.
+- **Fallback path:** if Colibri is down, slow (p95 > 1 s) or not yet installed, the same decision goes to an optional small model on the local Ollama (`local_decision_model`, off by default), then to Haiku with a JSON schema. The calling code doesn't know which engine answered; the `decisions.engine` column does.
 - **Calibration log:** every decision stores input reference, output, confidence and latency. When a decision is later overridden by Lucas or proven wrong (e.g. a "low risk" PR gets rejected), `outcome` is filled. The Decisions view shows accuracy per decision type and confidence band.
 - **Never final on irreversible actions:** System One can route and gate, but merging, deploying and spending beyond caps always need Lucas.
 
@@ -800,6 +813,14 @@ A **Meeting** button on the project page (and the manager, via `should_meet`) st
 2. **Action items become cards** automatically (`source = meeting`), linked to the meeting.
 3. Decisions that change a plan create a new plan **draft** for Lucas to approve.
 
+### As built (2026-11-12)
+
+- Participants are **internal** agents (the worker takes their turn: one structured call on the role's engine, typed by `MeetingTurn`) or **external** ones (a harness posts with `meetings.post`; [§25](#25-harness-access-api-mcp-and-cli)). Lucas posts from the meeting room, and may ask agents questions too.
+- `meetings.start` opens round 1 at once, so a harness can post its update immediately. Each round has a deadline (`round_minutes`, default 10) for external participants; at the deadline the round ends without them.
+- After a round: no question addressed to a participant → close; otherwise System One `meeting_open_questions` (no ≥ 0.85 closes), else the next round; `max_rounds` caps it.
+- Closing writes minutes (the `minutes` role, on the brief writer's engine) and turns the proposed action items into cards (`source = meeting`, assignee when named); the minutes go to the project journal as a milestone and, with the transcript, into notes.
+- Luna calls meetings with `call_meeting` (API engine), a `meeting` block (subscription engine) or the `/meeting` shortcut. `should_meet` is not wired yet.
+
 ---
 
 ## 10. Sandbox execution
@@ -854,7 +875,9 @@ podman run --rm \
 | Commits | Authored by the App's bot identity; message trailer `Card: p/<project>#<number>` and `Run: <run_id>`. |
 | PR body | Brief, acceptance criteria checklist, check results, reviewer summary, cost of the card, link back to the card. |
 | Status sync | **Polling** every 3–5 minutes for open PRs (the laptop can't receive webhooks without a tunnel). Merge → card `done`; "changes requested" review → card back to `in_progress` with the comments. |
-| Workspaces | Each card workspace is a clone on the SSD (`workspaces/<card>`), reused across runs of the same card, deleted 7 days after `done`. |
+| Workspaces | Each card workspace is a clone **of the project's folder** ([§26](#26-project-code-scripts-variables-and-storage)) on the SSD (`workspaces/<card>`), reused across runs of the same card, deleted 7 days after `done`. A GitHub-linked folder is synced from GitHub before the clone; the card branch is pushed to GitHub by URL. |
+| Projects without GitHub | The project folder is the only copy of the code: an approved review asks Lucas for a **merge** (inbox); on approval the worker merges the card branch into the folder's base branch (`--no-ff`); a conflict blocks the card with the files. |
+| After a PR merge | The project folder pulls the base branch from GitHub. Edits made in Orbitalia Moon to a linked project are pushed to `agent/<slug>-miniasys` with one standing PR (never to the base branch). |
 
 ---
 
@@ -914,6 +937,8 @@ Set a **monthly spend limit on the Anthropic API account** in the Console. If th
 | XSS through agent output in the UI | All markdown rendered with DOMPurify; no raw HTML from agents. |
 | Runaway spend | Pre-call enforcement + API-account limit + runaway detector. |
 | Someone on the network reaches the app | Everything bound to 127.0.0.1. Remote access (phone) only via Tailscale, if enabled. |
+| Secrets reaching run output | Variables marked secret are sealed with the master key, opened only by the worker to start a script run, and masked as `***` (raw, JSON-escaped, URL-encoded, base64) in log tails, full logs, live output and results. Residual risk, accepted: a script with network on can send a secret elsewhere; network is off per script unless enabled. |
+| A harness or its token does more than it should | API tokens ([§25](#25-harness-access-api-mcp-and-cli)) carry an access level (read < write < admin); only the SHA-256 is stored; a token bound to an agent (or acting as one) is never admin and can't decide approvals; every call is audited with its actor; tokens are revoked in Settings or with `tokens.revoke`. |
 | Windmill as an unsandboxed execution path | **Deferred.** Windmill MCP stays off (or read-only) until designed: dedicated user/token, single folder, draft-only scripts, deploy by approval. |
 | Data loss on a single laptop | Nightly pg_dump + restic off-machine; monthly restore drill. |
 
@@ -991,6 +1016,7 @@ ntfy messages carry a short title and a link to the item. The ntfy topic is a lo
 
 - `podman-compose up -d` for Postgres and Ollama; `loginctl enable-linger $USER` so they survive logout.
 - web and worker as **systemd user units** (`~/.config/systemd/user/`), started after the containers. Colibri as another user unit.
+- Or everything in containers: the root `compose.yaml` runs a one-shot setup service, Postgres, web and worker (from the app image, on the host network, every sandbox-bound folder mounted at the same path, the container socket mounted with `label=disable`) and the sandbox image build, with `podman-compose up -d --build --force-recreate` or `docker compose up -d --build`.
 - Later: convert containers to **Quadlet** units for boot-time start and health checks.
 
 ### Disk layout
@@ -1084,7 +1110,7 @@ If the HDD is NTFS, reformat it to ext4 or btrfs before use.
 
 ```text
 ┌────────────────────┬─────────────────────────────────────────────────────────────┬───────────────────┐
-│ ◆ Miniasys         │ Home                                   [⌘K Search…]   ☾  ⚙  │ Manager       ⇥   │
+│ ◆ Orbitalia Moon         │ Home                                   [⌘K Search…]   ☾  ⚙  │ Manager       ⇥   │
 │ [ p/demo-app ▾]    │─────────────────────────────────────────────────────────────│───────────────────│
 │                    │                                                             │ Opus · $0.42 today│
 │ ⌂  Home            │                                                             │                   │
@@ -1405,7 +1431,9 @@ All interactive elements reachable by keyboard; status never conveyed by color a
 
 ## 19. Internal API surface
 
-All endpoints live in the SvelteKit app, require the session cookie and validate input with Zod. The worker never exposes HTTP.
+All endpoints live in the SvelteKit app and validate input with Zod. The worker never exposes HTTP.
+
+**Since the harness work ([§25](#25-harness-access-api-mcp-and-cli)), every capability is an *operation* in one registry** (`apps/web/src/lib/server/ops/`): a name (`cards.create`), a Zod input, an access level and a handler. The UI's routes, page loads and form actions call operations; `POST /api/v1/ops/<name>` runs one for a token; the MCP server and the CLI are generated from the catalog (`GET /api/v1/ops`). A test fails when a route reaches the database without going through an operation. The table below is the original (cookie) surface the UI still uses; each of those routes now delegates to an operation.
 
 | Area | Endpoints (examples) |
 |---|---|
@@ -1467,6 +1495,7 @@ miniasys/
 | `NTFY_URL`, `NTFY_TOPIC` | | Topic is a long random string |
 | `MASTER_KEY_FILE` | | Encrypts app-level secrets |
 | `APP_PASSWORD_HASH` | argon2id hash | Single user |
+| `APP_PASSWORD_HASH_FILE` | file holding the argon2id hash | Alternative to `APP_PASSWORD_HASH`, kept with the secrets |
 
 ### compose.yaml (infrastructure only)
 
@@ -1525,7 +1554,8 @@ Pin image versions once the setup works.
 | **0 — Foundation** | Repo, compose (Postgres + Ollama), Drizzle schema v1, auth, app shell, System page, systemd units, backup script, sandbox image | App starts on login; backup + restore tested; a sandbox runs `echo` with all limits verified |
 | **1 — MVP core loop** | Agents CRUD + editor + versions + test panel; manager chat with plan approval; worker loop on Anthropic; workspace tools; `run_in_sandbox`; GitHub App branches + PRs + polling; Board + card drawer + activity log; Runs; Costs with enforcement; Inbox; ntfy; Settings; Audit log | One real card goes from a chat request to a merged PR, fully traced, with known cost; a budget block is proven by a test and once in real use |
 | **2 — Quality and efficiency** | Deterministic checks pipeline; Sonnet reviewer; Haiku briefs and compaction; prompt caching tuned; embeddings + `search_notes`; System One via Colibri with Haiku fallback; Decisions page | Reviewer catches seeded bugs in evals; cost per merged PR lower than Phase 1; Colibri p95 latency measured and the local-vs-fallback choice made |
-| **3 — Meetings** | Meeting button, protocol, caps, minutes, action items → cards, Meeting room screen, `should_meet` | Meetings close on their own within caps and produce cards Lucas keeps |
+| **3 — Meetings** | Meeting button, protocol, caps, minutes, action items → cards, Meeting room screen, `should_meet` (built 2026-11-12 except `should_meet`; [§9](#9-meetings)) | Meetings close on their own within caps and produce cards Lucas keeps |
+| **3b — Harness access** | Operation registry; `/api/v1` + API tokens; MCP server (HTTP and stdio); `miniasys` CLI; external agents; project journal and docs ([§25](#25-harness-access-api-mcp-and-cli)) | A harness runs a project end to end (agents, cards, journal, docs, a meeting) without the UI, and all of it shows in the UI |
 | **4 — Pocket lakehouse + Windmill** | Lakehouse layout, `query_lakehouse`, Lakehouse screen; separate Windmill instance; Windmill MCP security design (dedicated token, one folder, draft-only, deploy approval), then enable | An agent answers a data question from the lakehouse; an agent-proposed Windmill script reaches production only after Lucas deploys it |
 | **5 — Hardening and extras** | Weekly security scans + report; Timeline/Gantt; Quadlets for boot start; optional Tailscale access; optional move to a small server | Weekly report arrives on schedule; platform recovers from reboot without manual steps |
 
@@ -1559,4 +1589,89 @@ Pin image versions once the setup works.
 | 6 | Windmill MCP security design | Token scope, folder, draft-only flow, deploy approvals | Phase 4 |
 | 7 | Remote access | None vs Tailscale | Phase 5 |
 
+---
+
+## 25. Harness access: API, MCP and CLI
+
+Orbitalia Moon is also where work done **outside** it is organized, logged, documented and seen: a harness (Claude Code or any MCP client) drives Luna, creates agents, and those agents create and move cards, log steps, write docs and hold meetings. Everything the web UI can do, the API, the MCP server and the CLI can do, because all four call the same operations (§19).
+
+### Doors
+
+| Door | How | Notes |
+|---|---|---|
+| HTTP | `GET /api/v1/ops` (catalog with JSON Schemas), `POST /api/v1/ops/<name>` | `{ ok, data }` or `{ ok: false, error: { code, message, issues? } }`; `GET /api/v1/stream?topics=` for live events |
+| MCP (Streamable HTTP) | `http://127.0.0.1:3000/mcp` | stateless; one tool per operation the token allows (`cards.create` → `cards_create`), read-only/destructive annotations; resources `miniasys://projects/{p}/board`, `…/journal`, `…/docs/{doc}`; prompts `kickoff_project`, `log_step` |
+| MCP (stdio) | `miniasys mcp` | the same server, proxying to the HTTP API, for clients without HTTP MCP |
+| CLI | `miniasys <domain> <action> [--option value …]` | built from the catalog, so new operations need no CLI code; `--raw` for JSON; `--json '{…}'`/`--json -` for input; `login`, `chat`, `board`, `tail`, `watch` for people |
+
+### Tokens and attribution
+
+- `msy_…` tokens, stored as SHA-256 (`api_tokens`), with access `read`, `write` or `admin`; created in Settings → API tokens, with `tokens.create`, or by `miniasys login` (password → token, rate-limited like the login page).
+- Actor on every write: `user` (UI), `user:<token name>` (Lucas through a token), `agent:<slug>` (a token bound to an agent, or `X-Orbitalia Moon-Agent: <slug>` / `--as <slug>` on a user token). Card events, the journal, docs and the audit log record it.
+- Acting as an agent caps access at `write`; agents never decide approvals (the inbox stays Lucas's).
+
+### External agents
+
+`agents.runtime` is `internal` (versions, sandboxes, the worker loop) or `external` (an identity a harness acts as: no versions, never run by the worker). A card assigned to an external agent waits for its harness (`cards.list --assignee me`), which moves it through the state machine as `agent:<slug>`, records `branch`/`pr_number`/`pr_url` for code cards, and reads Lucas's notes with `cards.get`. An external agent's page shows its cards and its activity.
+
+### Journal and docs
+
+- `journal_entries`: per project, `kind` step | decision | milestone | issue | note, markdown body, optional card/meeting/run, actor. The Activity page shows it merged with card activity; `journal.add` / `journal.list`; internal agents use `log_step` (API engine) or a `journal` block (subscription engine).
+- `docs` + `doc_versions`: markdown pages per project, every save a version, optimistic concurrency with `base_version`; Docs tab with history; `docs.put/get/list/history/delete`; internal agents use `list_docs`/`read_doc`/`write_doc` or a `~~~~doc <slug> | <title>` block (their project's docs are in their context).
+- Both are indexed into `notes`, so `search_notes` finds them.
+
+### A harness session, end to end
+
+```bash
+miniasys login                                   # or Settings → API tokens
+miniasys agents create --slug cc-laptop --runtime external
+miniasys tokens create --name cc-laptop --agent cc-laptop --access write
+claude mcp add --transport http miniasys http://127.0.0.1:3000/mcp --header "Authorization: Bearer msy_…"
+# then, from the harness (as tools) or the shell:
+miniasys projects create --slug demo --name Demo
+miniasys docs put demo overview --body "…" --base-version 0
+miniasys chat --project demo "/plan"             # Luna proposes a plan; Lucas approves it in the inbox
+miniasys cards list --assignee me
+miniasys journal add demo "Parser done" --kind milestone --card demo#3
+miniasys meetings start demo --topic "Error format" --participants dev --participants cc-laptop
+```
+
+---
+
+## 26. Project code, scripts, variables and storage
+
+### Where a project's code lives
+
+Every project has a **code folder** in Orbitalia Moon: a git repository at `PROJECTS_DIR/<slug>` (default `~/miniasys/projects`), created with the project (or cloned from its GitHub repository by the worker), changed only by commits with their actor as author, and deleted with the project. It is the source of truth; GitHub, when linked, is a mirror (§11).
+
+| Change | How it reaches the folder |
+|---|---|
+| Lucas, a harness or an external agent edits a file | `files.put/move/delete` (UI Code tab, MCP, CLI): a commit on the base branch |
+| An internal agent works a card | on the card's branch in its workspace (a clone of the folder); merged into the folder after review and Lucas's merge approval (no GitHub), or through the PR (GitHub) |
+| A PR is merged on GitHub | the worker pulls the base branch into the folder |
+
+`projects.delete` (Lucas only, `confirm: <slug>`) removes the folder, the storage folder, dependency caches, card workspaces and schedules, stops the project's runs, and keeps the history (the row is renamed `<slug>~deleted-<ts>`).
+
+### Scripts
+
+A script is a file under `scripts/` in the code folder — `.py` (Python 3), `.ts` (TypeScript, run by Node with type stripping), `.sh` (Bash) or `.sql` (DuckDB). Its versions are the folder's git history; the `scripts` table holds how it runs.
+
+- **Arguments** are read from the code: Python `def main(day: str, n: int = 1)`, TypeScript `export async function main(day: string, n = 1)`, Bash/SQL header lines `# arg: name type [default]` / `-- arg: …`. The JSON Schema drives the UI form, CLI flags (`miniasys run <project> <script> --day …`) and MCP input. Python gets keyword arguments; TypeScript and Bash positional ones (Bash as `$1…`); SQL as DuckDB variables (`getvariable('name')`).
+- **A run** (`runs.kind = script`) is a sandbox (§10) with the folder read-only at `/project`, the storage folder read-write at `/storage` (also the working directory for Bash and SQL), the dependency cache read-only at `/deps`, the variables as environment variables, network off unless the script enables it. A wrapper calls `main()` and records its return value as the run's result; SQL's result is its last statement's rows; Bash's its last line printed (JSON when it parses). Output streams live as run events; cancel with `runs.cancel`.
+- **Dependencies**: Python `# requirements: pandas==2.2 requests` header lines (else the project's `requirements.txt`), TypeScript the project's `package.json` — installed once per content hash into `DEPS_DIR/<slug>/…` by a networked sandbox run, then reused.
+- **Schedules**: cron (5 fields, the platform's time zone) with fixed arguments, kept in pg-boss (one schedule per script); one run per tick (a duplicate tick is ignored) and none while the previous run still runs. A failed scheduled run notifies Lucas and logs an `issue` in the journal.
+- Internal agents run saved scripts with the `run_script` tool; agents on the subscription engine run code in their card workspace as usual.
+
+### Variables
+
+`variables` per project or global (a project's own wins). A **secret** is sealed with the master key, shown as `••••` everywhere and never read back by any door; the worker opens secrets only to start a run, and masks them in everything the run leaves behind (§13). Names are `UPPER_SNAKE_CASE`; `MINIASYS_*`, `PATH`, `HOME`, `PYTHONPATH`, `NODE_PATH`, `LD_*` are reserved.
+
+### Storage
+
+- The **storage folder** `STORAGE_DIR/<slug>` (`/storage` in runs, `MINIASYS_STORAGE`), browsable and editable from every door (`storage.*`, Storage tab).
+- Optional **S3-compatible** storage per project (`storage.config`: endpoint — empty for AWS —, bucket, prefix, region, and the names of the two secret variables holding the keys). Runs get `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_ENDPOINT_URL`, `MINIASYS_S3=s3://bucket/prefix` and network; the same bucket is browsable with `storage.* --backend s3`. The endpoint must be reachable from a sandbox (a container network or the internet: not the host's 127.0.0.1).
+
+### Operations
+
+`files.list/get/put/move/delete/history/show`, `scripts.list/get/save/settings/run/runs/delete`, `variables.list/set/delete`, `storage.list/get/put/delete/config`, `projects.sync`, `projects.delete` — UI tabs Code, Scripts, Storage; project Settings → Variables and Delete; Settings → Variables (global).
 

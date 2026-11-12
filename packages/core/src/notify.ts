@@ -6,6 +6,12 @@ export const CHANNELS = {
   inbox: "inbox",
   costs: "costs",
   manager: "manager",
+  journal: (projectId: string) => `journal:${projectId}`,
+  docs: (projectId: string) => `docs:${projectId}`,
+  meetings: "meetings",
+  files: (projectId: string) => `files:${projectId}`,
+  scripts: (projectId: string) => `scripts:${projectId}`,
+  meeting: (id: string) => `meeting:${id}`,
 } as const;
 
 /** Postgres channel names are identifiers: one fixed channel carries every topic. */

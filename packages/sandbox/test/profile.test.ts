@@ -23,6 +23,13 @@ describe("sandbox profile", () => {
     expect(s.HostConfig.Memory).toBe(2048 * 1024 * 1024);
   });
 
+  it("gives approved network through pasta on Podman (rootless Podman 5 has no slirp4netns by default)", () => {
+    const s = containerSpec({ ...req, network: true });
+    expect(s.HostConfig.NetworkMode).toBe("pasta");
+    expect(s.NetworkDisabled).toBe(false);
+    expect(podmanArgs({ ...req, network: true })).toContain("--network=pasta");
+  });
+
   it("refuses a relative workspace", () => {
     expect(() => containerSpec({ ...req, workspace: "ws" })).toThrow(/absolute/);
   });

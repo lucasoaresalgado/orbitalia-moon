@@ -1,12 +1,29 @@
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/jetbrains-mono";
+@import "@fontsource-variable/oswald";
 @import "tailwindcss";
 
-/* Design tokens (scope §18.2): dark by default, light available. Dense: 13 px base,
-   32–36 px rows, 1 px borders, 6 px corners on controls, 8 px on drawers. */
+/* Windows 98's system font, pixel for pixel (see lib/fonts/LICENSE-ms-sans-serif.txt) */
+@font-face {
+  font-family: "Pixelated MS Sans Serif";
+  src: url("./lib/fonts/ms_sans_serif.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Pixelated MS Sans Serif";
+  src: url("./lib/fonts/ms_sans_serif_bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+}
+
+/* Design tokens (scope §18.2): dark by default; light, green edition, EVA-01 and Windows 98
+   themes (data-theme on <html>). Dense: 13 px base, 32–36 px rows, 1 px borders,
+   6 px corners on controls, 8 px on drawers. Themes change colors and fonts here, and
+   their shapes in the theme blocks at the end. */
 @theme inline {
-  --font-sans: "Inter Variable", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-code);
   --color-surface-0: var(--surface-0);
   --color-surface-1: var(--surface-1);
   --color-surface-2: var(--surface-2);
@@ -27,6 +44,11 @@
   --color-series-1: var(--series-1);
   --color-series-2: var(--series-2);
   --color-series-3: var(--series-3);
+}
+
+:root {
+  --font-ui: "Inter Variable", system-ui, sans-serif;
+  --font-code: "JetBrains Mono Variable", ui-monospace, monospace;
 }
 
 :root,
@@ -80,6 +102,95 @@
   --series-3: #1baf7a;
 }
 
+/* Green edition: a terminal (the Claude Code palette's green, lavender, amber and pink
+   on Windows Terminal's near-black), monospace everywhere, no divisions until hovered. */
+[data-theme="green-edition"] {
+  color-scheme: dark;
+  --font-ui: "Cascadia Mono", "JetBrains Mono Variable", ui-monospace, monospace;
+  --font-code: "Cascadia Mono", "JetBrains Mono Variable", ui-monospace, monospace;
+  --surface-0: #0c0c0c;
+  --surface-1: #0c0c0c;
+  --surface-2: #1a1a1a;
+  --surface-3: #262626;
+  --text-primary: #f2f2f2;
+  --text-secondary: #bfbfbf;
+  --text-muted: #8a8a8a;
+  --border: #303030;
+  --accent: #4eba65;
+  --accent-fg: #0c0c0c;
+  --ok: #8fd694;
+  --warn: #ffc107;
+  --bad: #ff6b80;
+  --info: #b1b9f9;
+  --opus: #d77757;
+  --sonnet: #b1b9f9;
+  --haiku: #48968c;
+  --series-1: #4eba65;
+  --series-2: #b1b9f9;
+  --series-3: #d77757;
+}
+
+/* EVA-01: Unit-01's armor (deep violet, neon lime, warning orange) on a NERV night
+   console, NERV red for errors; condensed titles, hazard stripes. */
+[data-theme="eva01"] {
+  color-scheme: dark;
+  --font-display: "Oswald Variable", "Arial Narrow", sans-serif;
+  --surface-0: #0a0612;
+  --surface-1: #110a1e;
+  --surface-2: #1a102e;
+  --surface-3: #291848;
+  --text-primary: #efe9fb;
+  --text-secondary: #c2b6dc;
+  --text-muted: #8f80ae;
+  --border: #3b2768;
+  --accent: #9be62f;
+  --accent-fg: #0e0819;
+  --ok: #6fdc8c;
+  --warn: #ff9417;
+  --bad: #ff2b41;
+  --info: #b57bff;
+  --opus: #b57bff;
+  --sonnet: #ff9417;
+  --haiku: #9be62f;
+  --series-1: #9be62f;
+  --series-2: #ff9417;
+  --series-3: #b57bff;
+}
+
+/* Windows 98: the gray face, white fields, navy selection and the 16-color VGA palette. */
+[data-theme="win98"] {
+  color-scheme: light;
+  --font-ui: "Pixelated MS Sans Serif", Tahoma, "MS Sans Serif", Arial, sans-serif;
+  --font-code: "Courier New", Courier, monospace;
+  --surface-0: #c0c0c0;
+  /* the fields' color (inputs, lists, the editor): a clear blue; #e9f6e9 (clear green) or #ececec (clear gray) work too */
+  --w98-field: #e8f1fb;
+  --surface-1: var(--w98-field);
+  --surface-2: #dcdcdc;
+  --surface-3: #b8b8b8;
+  --text-primary: #000000;
+  --text-secondary: #1e1e1e;
+  --text-muted: #4f4f4f;
+  --border: #808080;
+  --accent: #000080;
+  --accent-fg: #ffffff;
+  --ok: #007a00;
+  --warn: #7a5c00;
+  --bad: #b00000;
+  --info: #000080;
+  --opus: #800080;
+  --sonnet: #000080;
+  --haiku: #007a7a;
+  --series-1: #000080;
+  --series-2: #a00000;
+  --series-3: #007a7a;
+  /* 98.css-style bevels */
+  --w98-raised: inset -1px -1px #0a0a0a, inset 1px 1px #ffffff, inset -2px -2px #808080, inset 2px 2px #dfdfdf;
+  --w98-pressed: inset -1px -1px #ffffff, inset 1px 1px #0a0a0a, inset -2px -2px #dfdfdf, inset 2px 2px #808080;
+  --w98-sunken: inset -1px -1px #ffffff, inset 1px 1px #808080, inset -2px -2px #dfdfdf, inset 2px 2px #0a0a0a;
+  --w98-thin: inset -1px -1px #808080, inset 1px 1px #ffffff;
+}
+
 html {
   font-size: 13px;
 }
@@ -122,7 +233,16 @@ textarea.input {
   @apply rounded-lg border border-line bg-surface-1;
 }
 .row {
-  @apply flex h-9 items-center gap-3 border-b border-line px-3 text-[12.5px] last:border-b-0 hover:bg-surface-2;
+  @apply flex min-h-9 items-center gap-3 border-b border-line px-3 py-1 text-[12.5px] last:border-b-0 hover:bg-surface-2;
+}
+/* native dropdown lists take the theme's colors (a transparent select draws a white list) */
+select.input {
+  background-color: var(--surface-1);
+}
+select option,
+select optgroup {
+  background-color: var(--surface-2);
+  color: var(--text-primary);
 }
 .tab {
   @apply -mb-px border-b-2 border-transparent px-2.5 py-1.5 text-[12.5px] text-fg-2 hover:text-fg;
@@ -182,3 +302,446 @@ textarea.input {
     animation: none;
   }
 }
+
+/* ------------------------------------------------------------------ theme shapes
+   Outside the components layer on purpose: these restyle the shared classes and win
+   over the utilities a few elements carry (rounded corners, borders, row lines). */
+
+/* ---- Green edition: square, monospace, no divisions until something is hovered */
+[data-theme="green-edition"] * {
+  border-radius: 0 !important;
+}
+[data-theme="green-edition"] body {
+  font-feature-settings: normal;
+}
+[data-theme="green-edition"] .btn,
+[data-theme="green-edition"] .btn-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-secondary);
+}
+[data-theme="green-edition"] .btn:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+[data-theme="green-edition"] .btn-primary {
+  color: var(--accent);
+  border-color: transparent;
+  background: transparent;
+}
+[data-theme="green-edition"] .btn-primary::before {
+  content: "›";
+  margin-right: 0.15em;
+}
+[data-theme="green-edition"] .btn-primary:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+  filter: none;
+}
+[data-theme="green-edition"] .btn-danger {
+  color: var(--bad);
+}
+[data-theme="green-edition"] .btn-danger:hover:not(:disabled) {
+  border-color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  color: var(--bad);
+}
+[data-theme="green-edition"] .input {
+  border-color: var(--border);
+  background: transparent;
+}
+[data-theme="green-edition"] select.input {
+  background-color: var(--surface-1);
+}
+[data-theme="green-edition"] select option {
+  background-color: #141414;
+  color: var(--text-primary);
+}
+[data-theme="green-edition"] .input:focus {
+  border-color: var(--accent);
+}
+[data-theme="green-edition"] .panel {
+  border-color: var(--surface-3);
+  background: transparent;
+}
+[data-theme="green-edition"] .row {
+  border-bottom-color: transparent;
+}
+[data-theme="green-edition"] .label {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+[data-theme="green-edition"] .label::before {
+  content: "# ";
+  color: var(--surface-3);
+}
+[data-theme="green-edition"] .tab {
+  border-bottom-color: transparent;
+}
+[data-theme="green-edition"] .tab-active {
+  border-bottom-color: transparent;
+  color: var(--accent);
+}
+[data-theme="green-edition"] .tab-active::before {
+  content: "› ";
+}
+[data-theme="green-edition"] .topbar,
+[data-theme="green-edition"] .sidebar,
+[data-theme="green-edition"] .sidebar * {
+  border-color: transparent;
+}
+[data-theme="green-edition"] .topbar {
+  border-bottom: 1px solid var(--surface-3);
+}
+[data-theme="green-edition"] .topbar h1::before {
+  content: "✻ ";
+  color: var(--accent);
+}
+[data-theme="green-edition"] .sidebar {
+  border-right: 1px solid var(--surface-3);
+}
+[data-theme="green-edition"] .sidebar a[aria-current="page"] {
+  background: transparent;
+  color: var(--accent);
+}
+[data-theme="green-edition"] :focus-visible {
+  outline: 1px dashed var(--accent);
+}
+[data-theme="green-edition"] ::selection {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* ---- EVA-01: violet plates, lime signal lines, orange NERV captions */
+[data-theme="eva01"] * {
+  border-radius: 0 !important;
+}
+[data-theme="eva01"] .label,
+[data-theme="eva01"] .tab,
+[data-theme="eva01"] .topbar h1,
+[data-theme="eva01"] h2 {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+[data-theme="eva01"] .label {
+  color: var(--warn);
+  font-weight: 500;
+}
+[data-theme="eva01"] h2 {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+[data-theme="eva01"] .topbar h1 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+}
+[data-theme="eva01"] .topbar {
+  position: relative;
+  border-bottom: 0;
+}
+[data-theme="eva01"] .topbar::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 4px;
+  background: repeating-linear-gradient(-45deg, var(--warn) 0 8px, #0a0612 8px 16px);
+}
+[data-theme="eva01"] .sidebar {
+  border-right-color: var(--border);
+  background: linear-gradient(180deg, #160c29, var(--surface-1) 40%);
+}
+[data-theme="eva01"] .sidebar a[aria-current="page"] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  box-shadow: inset 3px 0 var(--accent);
+}
+[data-theme="eva01"] .btn {
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+[data-theme="eva01"] .btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--surface-2);
+}
+[data-theme="eva01"] .btn-ghost {
+  border-color: transparent;
+  background: transparent;
+}
+[data-theme="eva01"] .btn-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 600;
+  clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px);
+  padding-inline: 0.9rem;
+}
+[data-theme="eva01"] .btn-primary:hover:not(:disabled) {
+  background: #b7ff52;
+  color: var(--accent-fg);
+}
+[data-theme="eva01"] .btn-danger {
+  border-color: color-mix(in srgb, var(--bad) 60%, transparent);
+}
+[data-theme="eva01"] .panel {
+  border-color: var(--border);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+}
+[data-theme="eva01"] .input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+[data-theme="eva01"] .tab-active {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+[data-theme="eva01"] :focus-visible {
+  outline: 2px solid var(--warn);
+}
+[data-theme="eva01"] ::selection {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* ---- Windows 98: bevels, sunken fields, a navy title bar, 8 pt MS Sans Serif */
+[data-theme="win98"] * {
+  border-radius: 0 !important;
+}
+[data-theme="win98"] body {
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+  font-feature-settings: normal;
+}
+/* Windows 98 had one size: 8 pt (11 px) */
+[data-theme="win98"] body :where(:not(.mono, code, pre, kbd, .cm-editor, .cm-editor *)) {
+  font-size: 11px !important;
+}
+[data-theme="win98"] .mono,
+[data-theme="win98"] code,
+[data-theme="win98"] pre {
+  font-size: 12px !important;
+}
+[data-theme="win98"] .btn {
+  border: 0;
+  background: #c0c0c0;
+  color: #000;
+  box-shadow: var(--w98-raised);
+  min-height: 23px;
+  padding: 0 12px;
+}
+[data-theme="win98"] .btn:active:not(:disabled) {
+  box-shadow: var(--w98-pressed);
+  padding: 1px 11px 0 13px;
+}
+[data-theme="win98"] .btn:disabled {
+  opacity: 1;
+  color: #808080;
+  text-shadow: 1px 1px 0 #fff;
+}
+[data-theme="win98"] .btn:hover:not(:disabled) {
+  background: #c0c0c0;
+}
+/* the default button: an extra black frame */
+[data-theme="win98"] .btn-primary {
+  color: #000;
+  font-weight: 700;
+  box-shadow: 0 0 0 1px #000, var(--w98-raised);
+}
+[data-theme="win98"] .btn-primary:hover:not(:disabled) {
+  filter: none;
+}
+[data-theme="win98"] .btn-danger {
+  color: var(--bad);
+}
+/* toolbar buttons: flat until hovered, then a thin bevel */
+[data-theme="win98"] .btn-ghost {
+  background: transparent;
+  box-shadow: none;
+  padding: 0 4px;
+}
+[data-theme="win98"] .btn-ghost:hover:not(:disabled) {
+  background: transparent;
+  box-shadow: var(--w98-thin);
+}
+[data-theme="win98"] .input,
+[data-theme="win98"] select,
+[data-theme="win98"] textarea {
+  border: 0;
+  background: var(--w98-field);
+  color: #000;
+  box-shadow: var(--w98-sunken);
+  min-height: 21px;
+}
+[data-theme="win98"] .input:focus {
+  border: 0;
+}
+[data-theme="win98"] .panel {
+  border: 0;
+  background: var(--w98-field);
+  box-shadow: var(--w98-sunken);
+}
+[data-theme="win98"] .row {
+  border-bottom: 0;
+}
+[data-theme="win98"] a.row:hover,
+[data-theme="win98"] button.row:hover {
+  background: #000080;
+}
+[data-theme="win98"] a.row:hover *,
+[data-theme="win98"] button.row:hover *,
+[data-theme="win98"] a.row:hover,
+[data-theme="win98"] button.row:hover {
+  color: #fff !important;
+}
+[data-theme="win98"] .label {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: #000;
+}
+[data-theme="win98"] h2 {
+  font-weight: 700;
+}
+[data-theme="win98"] .tab {
+  margin: 2px 0 0 0;
+  padding: 3px 10px 2px;
+  border: 0;
+  color: #000;
+  background: #c0c0c0;
+  box-shadow: inset 1px 1px #fff, inset -1px 0 #0a0a0a, inset -2px 0 #808080;
+}
+[data-theme="win98"] .tab-active {
+  margin-top: 0;
+  padding-bottom: 4px;
+  position: relative;
+  z-index: 1;
+  box-shadow: inset 1px 1px #fff, inset 2px 2px #dfdfdf, inset -1px 0 #0a0a0a, inset -2px 0 #808080;
+}
+[data-theme="win98"] .topbar {
+  border: 0;
+  height: 30px;
+  margin: 3px 3px 0;
+  padding: 0 3px 0 6px;
+  color: #fff;
+  background: linear-gradient(90deg, #000080, #1084d0);
+}
+[data-theme="win98"] .topbar h1 {
+  font-weight: 700;
+  color: #fff;
+}
+[data-theme="win98"] .topbar h1::before {
+  content: "";
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 5px;
+  vertical-align: -3px;
+  background: conic-gradient(#ff0000 0 25%, #00a000 0 50%, #ffd800 0 75%, #0050ff 0);
+  box-shadow: inset 0 0 0 1px #000;
+}
+/* title-bar buttons: small, gray, raised */
+[data-theme="win98"] .topbar .btn-ghost {
+  min-height: 18px;
+  height: 18px;
+  width: 20px;
+  justify-content: center;
+  padding: 0;
+  background: #c0c0c0;
+  color: #000;
+  box-shadow: var(--w98-raised);
+}
+[data-theme="win98"] .topbar .btn-ghost:active {
+  box-shadow: var(--w98-pressed);
+}
+[data-theme="win98"] .topbar .input {
+  min-height: 20px;
+  height: 20px;
+}
+[data-theme="win98"] .sidebar {
+  border: 0;
+  margin: 3px 0 3px 3px;
+  background: #c0c0c0;
+  box-shadow: var(--w98-raised);
+}
+[data-theme="win98"] .sidebar * {
+  border-color: #808080 !important;
+}
+[data-theme="win98"] .sidebar a {
+  color: #000;
+}
+[data-theme="win98"] .sidebar a:hover {
+  background: transparent;
+  text-decoration: underline;
+}
+[data-theme="win98"] .sidebar a[aria-current="page"] {
+  background: #000080;
+  color: #fff;
+  text-decoration: none;
+}
+/* chrome is the gray face; only fields (inputs, lists, the editor, output boxes) get the tint */
+[data-theme="win98"] .bg-surface-1 {
+  background-color: #c0c0c0;
+}
+[data-theme="win98"] pre.bg-surface-0,
+[data-theme="win98"] .prose-sm pre {
+  background-color: var(--w98-field);
+  box-shadow: var(--w98-sunken);
+}
+/* dialogs and drawers: raised windows */
+[data-theme="win98"] [role="dialog"],
+[data-theme="win98"] .fixed.bg-surface-1 {
+  border: 0;
+  background-color: #c0c0c0;
+  box-shadow: var(--w98-raised), 4px 4px 0 rgb(0 0 0 / 0.25);
+}
+[data-theme="win98"] select option {
+  background: var(--w98-field);
+  color: #000;
+}
+[data-theme="win98"] .row {
+  min-height: 22px;
+  padding-block: 1px;
+}
+[data-theme="win98"] input[type="checkbox"],
+[data-theme="win98"] input[type="radio"] {
+  accent-color: #000080;
+}
+[data-theme="win98"] ::selection {
+  background: #000080;
+  color: #fff;
+}
+[data-theme="win98"] :focus-visible {
+  outline: 1px dotted #000;
+  outline-offset: -4px;
+}
+/* text fields showed only the caret */
+[data-theme="win98"] input:not([type="checkbox"], [type="radio"]):focus-visible,
+[data-theme="win98"] textarea:focus-visible {
+  outline: none;
+}
+[data-theme="win98"] ::-webkit-scrollbar {
+  width: 16px;
+  height: 16px;
+}
+[data-theme="win98"] ::-webkit-scrollbar-track {
+  background-color: #dfdfdf;
+  background-image: conic-gradient(#c0c0c0 25%, #fff 0 50%, #c0c0c0 0 75%, #fff 0);
+  background-size: 2px 2px;
+}
+[data-theme="win98"] ::-webkit-scrollbar-thumb {
+  background: #c0c0c0;
+  box-shadow: var(--w98-raised);
+}
+[data-theme="win98"] ::-webkit-scrollbar-button:single-button {
+  display: block;
+  width: 16px;
+  height: 16px;
+  background: #c0c0c0;
+  box-shadow: var(--w98-raised);
+}
+

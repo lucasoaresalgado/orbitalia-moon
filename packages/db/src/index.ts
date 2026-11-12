@@ -7,7 +7,7 @@ import * as schema from "./schema.ts";
 
 export * as schema from "./schema.ts";
 export * from "./schema.ts";
-export { sql, eq, and, or, desc, asc, inArray, isNull, gte, lte } from "drizzle-orm";
+export { sql, eq, ne, and, or, desc, asc, inArray, isNull, isNotNull, gte, lte } from "drizzle-orm";
 
 export type Db = PostgresJsDatabase<typeof schema>;
 export type Sql = postgres.Sql;
@@ -77,6 +77,8 @@ export interface ModelSettings {
   security: string;
   decisions_fallback: string;
   colibri_decision_model: string | null;
+  /** a small model on the local Ollama for decisions; null turns it off */
+  local_decision_model: string | null;
 }
 
 export const DEFAULT_MODELS: ModelSettings = {
@@ -88,6 +90,7 @@ export const DEFAULT_MODELS: ModelSettings = {
   security: "claude-sonnet-5-5",
   decisions_fallback: "claude-haiku-5-5",
   colibri_decision_model: null,
+  local_decision_model: null,
 };
 
 export interface SandboxSettings {
@@ -101,6 +104,9 @@ export interface SandboxSettings {
 export const DEFAULT_SANDBOX: SandboxSettings = { cpus: 1, memMb: 1024, maxConcurrent: 2, timeoutS: 300, networkAllowlist: [] };
 
 export * from "./cards.ts";
+export * from "./journal.ts";
+export * from "./meetings.ts";
+export * from "./variables.ts";
 
 export type Engine = "api" | "claude_code";
 export interface EngineSettings {

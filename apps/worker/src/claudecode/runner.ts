@@ -1,7 +1,7 @@
 // The Claude subscription engine: the real Claude Code CLI, headless, inside a
 // sandbox container. It logs in with the token from `claude setup-token`
 // (Anthropic's supported way to use a subscription non-interactively), stored
-// encrypted as a secret. Miniasys never calls the API with that token itself.
+// encrypted as a secret. Orbitalia Moon never calls the API with that token itself.
 //
 // Differences from the API engine, by design:
 // - Claude Code uses its own tools inside the container, which needs network
@@ -93,7 +93,9 @@ export async function runClaudeCode(s: Services, o: ClaudeCodeOptions): Promise<
   if (o.tools === "none") args.push("--tools", '""');
   if (o.resume && /^[\w-]+$/.test(o.resume)) args.push("--resume", o.resume);
   if (o.jsonSchema) {
-    await writeFile(join(meta, "schema.json"), JSON.stringify(o.jsonSchema));
+    // Claude Code's validator has no draft 2020-12 meta-schema registered: a "$schema" key (zod adds one) fails the run
+    const { $schema: _drop, ...schema } = o.jsonSchema as Record<string, unknown>;
+    await writeFile(join(meta, "schema.json"), JSON.stringify(schema));
     args.push("--json-schema", q("/claude-home/.miniasys/schema.json"));
   }
   const command = args.join(" ");

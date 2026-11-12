@@ -46,11 +46,11 @@
     else if (e.key === "r" && cur) void reject(cur);
     else if (e.key === "Enter" && cur) void goto(link(cur));
   }
-  const kindLabel: Record<string, string> = { plan: "Plan", tool: "Tool call", network: "Network access", budget_raise: "Budget raise", question: "Question", windmill_deploy: "Windmill deploy" };
+  const kindLabel: Record<string, string> = { plan: "Plan", tool: "Tool call", network: "Network access", budget_raise: "Budget raise", question: "Question", merge: "Merge into the project", windmill_deploy: "Windmill deploy" };
 </script>
 
 <svelte:window onkeydown={key} />
-<svelte:head><title>Inbox · Miniasys</title></svelte:head>
+<svelte:head><title>Inbox · Orbitalia Moon</title></svelte:head>
 
 <div class="mx-auto max-w-4xl p-6">
   <div class="mb-3 flex border-b border-line" role="tablist">
@@ -75,6 +75,10 @@
         {:else if a.kind === "tool" || a.kind === "network"}
           <div class="mt-1"><span class="mono">{a.request.tool}</span> <span class="text-[11px] text-muted">risk {a.request.risk}</span></div>
           <pre class="mt-1 max-h-48 overflow-auto rounded bg-surface-0 p-2 font-mono text-[11.5px]">{JSON.stringify(a.request.input, null, 2)}</pre>
+        {:else if a.kind === "merge"}
+          <p class="mt-1"><span class="font-medium">{a.request.title}</span> → the project's code folder ({a.request.files?.length ?? 0} files, <span class="text-ok">+{a.request.insertions}</span> <span class="text-bad">-{a.request.deletions}</span>)</p>
+          {#if a.request.review}<p class="mt-1 text-[12px] text-fg-2">Reviewer: {a.request.review}</p>{/if}
+          {#if a.request.files?.length}<p class="mono mt-1 truncate text-[11.5px] text-muted">{a.request.files.join("  ")}</p>{/if}
         {:else if a.kind === "budget_raise"}
           <p class="mt-1">{a.request.message}</p>
           <div class="mt-2 flex items-center gap-2 text-[12px]"><label for="r-{a.id}">Raise each blocking budget by {a.request.unit === "tokens" ? "tokens" : "$"}</label><input id="r-{a.id}" type="number" min={a.request.unit === "tokens" ? 10000 : 0.5} step={a.request.unit === "tokens" ? 100000 : 0.5} class="input {a.request.unit === 'tokens' ? 'w-32' : 'w-24'}" value={raise[a.id] ?? suggested(a)} oninput={(e) => (raise[a.id] = Number((e.target as HTMLInputElement).value))} /></div>

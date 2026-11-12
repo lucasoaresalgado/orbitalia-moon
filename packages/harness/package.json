@@ -1,0 +1,16 @@
+{
+  "name": "@miniasys/harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./mcp": "./src/mcp.ts"
+  },
+  "scripts": {
+    "check": "tsc -p ."
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.4.0"
+  }
+}

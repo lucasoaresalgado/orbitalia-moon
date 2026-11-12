@@ -6,6 +6,7 @@ import type { Database } from "@miniasys/db";
 import type { Decider, OllamaEmbeddings } from "@miniasys/llm";
 import type { SandboxRunner } from "@miniasys/sandbox";
 import type { ToolRegistry } from "@miniasys/tools";
+import type { ProjectRepos } from "@miniasys/projects";
 import type { Budgets } from "./budgets.ts";
 import type { GitHub } from "./github.ts";
 import type { Journal } from "./journal.ts";
@@ -27,6 +28,8 @@ export interface Services {
   github: GitHub | null;
   embeddings: OllamaEmbeddings;
   envelope: Envelope;
+  /** the projects' code folders (scope §26) */
+  repos: ProjectRepos;
 }
 
 /** pg-boss queue names. */
@@ -44,4 +47,11 @@ export const QUEUES = {
   backup: "backup.nightly",
   cardNote: "card.note",
   cortexBuild: "cortex.build",
+  meetingStep: "meeting.step",
+  cardMerge: "card.merge",
+  projectEnsure: "project.ensure",
+  projectPublish: "project.publish",
+  scriptRun: "script.run",
+  scriptScheduled: "script.scheduled",
+  scriptSchedule: "script.schedule",
 } as const;

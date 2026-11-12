@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import Docker from "dockerode";
 import { PassThrough } from "node:stream";
+import { redactor } from "./redact.ts";
 import { containerSpec, demux, SANDBOX_LABEL, tail, type Runtime, type SandboxRequest } from "./profile.ts";
 
 export interface SandboxResult {
@@ -91,7 +92,10 @@ export class SandboxRunner {
         signal?.removeEventListener("abort", kill);
       }
       const logs = (await container.logs({ stdout: true, stderr: true, follow: false })) as unknown as Buffer;
-      const { stdout, stderr } = demux(Buffer.isBuffer(logs) ? logs : Buffer.from(String(logs)));
+      const mask = redactor(req.redact ?? []);
+      const raw = demux(Buffer.isBuffer(logs) ? logs : Buffer.from(String(logs)));
+      const stdout = mask(raw.stdout);
+      const stderr = mask(raw.stderr);
       let fullLogPath: string | null = null;
       if (this.logDir && (stdout.length > 20_000 || stderr.length > 20_000)) {
         const dir = join(this.logDir, "sandbox", req.runId);
@@ -119,6 +123,7 @@ export class SandboxRunner {
     let stopped = false;
     let stdout = "";
     let stderr = "";
+    const mask = redactor(req.redact ?? []);
     try {
       container = await this.docker.createContainer(spec as Docker.ContainerCreateOptions);
       const c = container;
@@ -135,7 +140,7 @@ export class SandboxRunner {
         buf += text;
         let nl: number;
         while ((nl = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, nl);
+          const line = mask(buf.slice(0, nl));
           buf = buf.slice(nl + 1);
           if (!line.trim()) continue;
           chain = chain.then(async () => {
@@ -163,8 +168,10 @@ export class SandboxRunner {
         signal?.removeEventListener("abort", kill);
       }
       await new Promise((r) => setTimeout(r, 50));
-      if (buf.trim() && !stopped) chain = chain.then(async () => void (await onLine(buf)));
+      if (buf.trim() && !stopped) chain = chain.then(async () => void (await onLine(mask(buf))));
       await chain;
+      stdout = mask(stdout);
+      stderr = mask(stderr);
       return { containerName: spec.name, exitCode, timedOut, stopped, stdout, stderr, stdoutTail: tail(stdout), stderrTail: tail(stderr), durationMs: Date.now() - started, fullLogPath: null };
     } finally {
       if (container) await container.remove({ force: true }).catch(() => {});

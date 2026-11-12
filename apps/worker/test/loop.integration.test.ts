@@ -20,6 +20,7 @@ import { Models } from "../src/models.ts";
 import { Notifier } from "../src/notifier.ts";
 import type { Services } from "../src/services.ts";
 import { Workspaces } from "../src/workspaces.ts";
+import { ProjectRepos } from "@miniasys/projects";
 
 const url = process.env.TEST_DATABASE_URL;
 const d: Database | null = url ? connect(url, 4) : null;
@@ -39,6 +40,7 @@ function services(): Services {
     registry: defaultRegistry(), github: null,
     embeddings: { embed: async () => [], model: "none" } as unknown as Services["embeddings"],
     envelope: new Envelope(null),
+    repos: new ProjectRepos(join(tmp, "projects")),
   };
 }
 
@@ -83,7 +85,7 @@ describe.skipIf(!url)("agent loop (Postgres + scripted model)", () => {
     const { run, card } = await newRun();
     script = [toolUse("t1", "write_file", { path: "hello.txt", content: "hi" }), toolUse("t2", "git_commit", { message: "Add hello" }), say("Done: wrote hello.txt.")];
     mock = new MockClient(script);
-    const status = await executeRun(s, new Workspaces(tmp, null), run, new AbortController().signal);
+    const status = await executeRun(s, new Workspaces(tmp, null, new ProjectRepos(join(tmp, "projects"))), run, new AbortController().signal);
     expect(status).toBe("succeeded");
     expect(await readFile(join(tmp, card.id, "hello.txt"), "utf8")).toBe("hi");
     const r = await reload(run.id);
@@ -101,7 +103,7 @@ describe.skipIf(!url)("agent loop (Postgres + scripted model)", () => {
     const s = services();
     const { run } = await newRun();
     mock = new MockClient([toolUse("t1", "read_file", { path: "../../etc/passwd" }), say("Could not read it.")]);
-    expect(await executeRun(s, new Workspaces(tmp, null), run, new AbortController().signal)).toBe("succeeded");
+    expect(await executeRun(s, new Workspaces(tmp, null, new ProjectRepos(join(tmp, "projects"))), run, new AbortController().signal)).toBe("succeeded");
     const last = mock.requests[1]!.messages.at(-1)!;
     expect(JSON.stringify(last)).toMatch(/outside the workspace|denied/);
   });
@@ -110,7 +112,7 @@ describe.skipIf(!url)("agent loop (Postgres + scripted model)", () => {
     const s = services();
     const { run, card } = await newRun({ tools: [{ name: "write_file", requires_approval: true }] });
     mock = new MockClient([toolUse("t1", "write_file", { path: "a.txt", content: "x" }), say("Wrote it after approval.")]);
-    const ws = new Workspaces(tmp, null);
+    const ws = new Workspaces(tmp, null, new ProjectRepos(join(tmp, "projects")));
     expect(await executeRun(s, ws, run, new AbortController().signal)).toBe("waiting_approval");
     const [ap] = await d!.db.select().from(approvals).where(eq(approvals.runId, run.id));
     expect(ap?.kind).toBe("tool");
@@ -131,7 +133,7 @@ describe.skipIf(!url)("agent loop (Postgres + scripted model)", () => {
     await d!.db.update(budgetDefaults).set({ limitUsd: 0.0001 }).where(eq(budgetDefaults.scope, "global_day"));
     const { run, card } = await newRun();
     mock = new MockClient([say("never sent")]);
-    expect(await executeRun(s, new Workspaces(tmp, null), run, new AbortController().signal)).toBe("waiting_approval");
+    expect(await executeRun(s, new Workspaces(tmp, null, new ProjectRepos(join(tmp, "projects"))), run, new AbortController().signal)).toBe("waiting_approval");
     expect(mock.requests).toHaveLength(0);
     const [ap] = await d!.db.select().from(approvals).where(eq(approvals.runId, run.id));
     expect(ap?.kind).toBe("budget_raise");
@@ -148,7 +150,7 @@ describe.skipIf(!url)("agent loop (Postgres + scripted model)", () => {
     const { run } = await newRun();
     mock = new MockClient([say("never sent")]);
     await new Promise((r) => setTimeout(r, 5100)); // the unit is cached for 5 s
-    expect(await executeRun(s, new Workspaces(tmp, null), run, new AbortController().signal)).toBe("waiting_approval");
+    expect(await executeRun(s, new Workspaces(tmp, null, new ProjectRepos(join(tmp, "projects"))), run, new AbortController().signal)).toBe("waiting_approval");
     expect(mock.requests).toHaveLength(0);
     const [ap] = await d!.db.select().from(approvals).where(eq(approvals.runId, run.id));
     expect((ap!.request as { unit: string }).unit).toBe("tokens");
@@ -158,7 +160,7 @@ describe.skipIf(!url)("agent loop (Postgres + scripted model)", () => {
     const s = services();
     const { run } = await newRun();
     mock = new MockClient([say("hello")]);
-    expect(await executeRun(s, new Workspaces(tmp, null), run, new AbortController().signal)).toBe("succeeded");
+    expect(await executeRun(s, new Workspaces(tmp, null, new ProjectRepos(join(tmp, "projects"))), run, new AbortController().signal)).toBe("succeeded");
     const row = (await d!.sql<{ usd: number; tokens: number }[]>`SELECT spent_usd::float8 AS usd, spent_tokens::int AS tokens FROM budgets WHERE scope = 'global_day'`)[0]!;
     expect(row.usd).toBeGreaterThan(0);
     expect(row.tokens).toBe(150); // the mock's 100 in + 50 out
@@ -180,7 +182,7 @@ describe.skipIf(!url)("agent loop (Postgres + scripted model)", () => {
       if (++calls === 2) await d!.db.insert(cardNotes).values({ cardId: card.id, text: "Also add a newline at the end." });
       yield* orig(req);
     };
-    const ws = new Workspaces(tmp, null);
+    const ws = new Workspaces(tmp, null, new ProjectRepos(join(tmp, "projects")));
     // the mid-run note is inserted during call 2 and delivered with call 3
     expect(await executeRun(s, ws, run, new AbortController().signal)).toBe("succeeded");
     expect(JSON.stringify(mock.requests[0]!.messages[0])).toContain("Use a .txt file");
@@ -210,7 +212,7 @@ describe.skipIf(!url)("agent loop (Postgres + scripted model)", () => {
       toolUse("t4", "limbic_remember", { memory: "Files in this project use two-space indentation." }),
       say("done"),
     ]);
-    expect(await executeRun(s, new Workspaces(tmp, null), run, new AbortController().signal)).toBe("succeeded");
+    expect(await executeRun(s, new Workspaces(tmp, null, new ProjectRepos(join(tmp, "projects"))), run, new AbortController().signal)).toBe("succeeded");
     const results = mock.requests.slice(1).map((r) => JSON.stringify(r.messages.at(-1)));
     expect(results[0]).toContain("only/style.md");
     expect(results[1]).toContain("two-space indentation");
@@ -219,7 +221,7 @@ describe.skipIf(!url)("agent loop (Postgres + scripted model)", () => {
     // the memory is in the next run's prompt
     const next = await newRun();
     mock = new MockClient([say("ok")]);
-    await executeRun(s, new Workspaces(tmp, null), next.run, new AbortController().signal);
+    await executeRun(s, new Workspaces(tmp, null, new ProjectRepos(join(tmp, "projects"))), next.run, new AbortController().signal);
     expect(JSON.stringify(mock.requests[0]!.system)).toContain("two-space indentation");
   });
 
@@ -236,10 +238,10 @@ describe.skipIf(!url)("agent loop (Postgres + scripted model)", () => {
       yield* orig(req);
       if (calls === 1) ac.abort();
     };
-    expect(await executeRun(s, new Workspaces(tmp, null), run, ac.signal)).toBe("interrupted");
+    expect(await executeRun(s, new Workspaces(tmp, null, new ProjectRepos(join(tmp, "projects"))), run, ac.signal)).toBe("interrupted");
     const mid = await reload(run.id);
     expect((mid.checkpoint as { turn: number }).turn).toBe(1);
-    expect(await executeRun(s, new Workspaces(tmp, null), mid, new AbortController().signal)).toBe("succeeded");
+    expect(await executeRun(s, new Workspaces(tmp, null, new ProjectRepos(join(tmp, "projects"))), mid, new AbortController().signal)).toBe("succeeded");
     expect(calls).toBe(2);
   });
 });

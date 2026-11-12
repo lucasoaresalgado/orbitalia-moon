@@ -15,8 +15,8 @@
     "db:generate": "pnpm --filter @miniasys/db generate",
     "db:migrate": "pnpm --filter @miniasys/db migrate",
     "db:seed": "pnpm --filter @miniasys/db seed",
-    "infra:up": "podman-compose -f infra/compose.yaml up -d",
-    "infra:down": "podman-compose -f infra/compose.yaml down"
+    "infra:up": "${COMPOSE:-podman-compose} up -d postgres",
+    "infra:down": "${COMPOSE:-podman-compose} down"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

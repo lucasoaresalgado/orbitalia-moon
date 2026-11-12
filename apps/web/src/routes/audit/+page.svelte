@@ -4,7 +4,7 @@
   let open = $state<number | null>(null);
 </script>
 
-<svelte:head><title>Audit log · Miniasys</title></svelte:head>
+<svelte:head><title>Audit log · Orbitalia Moon</title></svelte:head>
 <div class="mx-auto max-w-5xl p-6">
   <form class="mb-3 flex gap-2">
     <select name="actor" class="input w-40" value={data.actor}><option value="">All actors</option><option value="user">user</option><option value="agent:">agents</option><option value="system">system</option></select>

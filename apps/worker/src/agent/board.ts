@@ -1,9 +1,13 @@
 // The BoardApi a run's tools see: its own card, the inbox, and (for the
 // manager) plan proposals.
 import { cardPath, CHANNELS, PlanContent } from "@miniasys/core";
-import { approvals, cardEvent, cards, plans, projects, publish, and, desc, eq, isNull, type Actor } from "@miniasys/db";
+import { addJournalEntry, agents, approvals, runs, scripts, startMeeting, inArray, cardEvent, cards, listDocs, notes, plans, projects, publish, putDoc, readDoc, and, desc, eq, isNull, type Actor, type Indexer } from "@miniasys/db";
+import { addNote } from "../knowledge.ts";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { languageOf, scriptArgs, scriptDescription } from "@miniasys/projects";
 import type { BoardApi } from "@miniasys/tools";
-import type { Services } from "../services.ts";
+import { QUEUES, type Services } from "../services.ts";
 
 export interface RunScope {
   runId: string;
@@ -24,6 +28,15 @@ export function boardApi(s: Services, r: RunScope): BoardApi {
   const needCard = () => {
     if (!r.cardId) throw new Error("this run has no card");
     return r.cardId;
+  };
+  const needProject = () => {
+    if (!r.projectId) throw new Error("this run has no project: the journal and docs belong to a project");
+    return r.projectId;
+  };
+  /** text for search_notes; a doc indexed again replaces its old note */
+  const index: Indexer = async (n) => {
+    if (n.replace && n.sourceId) await s.d.db.delete(notes).where(and(eq(notes.sourceType, n.sourceType), eq(notes.sourceId, n.sourceId)));
+    await addNote(s, { projectId: n.projectId, sourceType: n.sourceType, sourceId: n.sourceId, content: n.content });
   };
   return {
     async updateCard(patch) {
@@ -76,6 +89,55 @@ export function boardApi(s: Services, r: RunScope): BoardApi {
         link: `/projects/${project?.slug}/plan`,
       });
       return { approvalId, planId: row!.id };
+    },
+    async logStep(e) {
+      const row = await addJournalEntry(s.d, { projectId: needProject(), actor, kind: e.kind, title: e.title, body: e.body, cardId: r.cardId, runId: r.runId }, index);
+      return { id: row.id };
+    },
+    async listDocs() {
+      return listDocs(s.d, needProject());
+    },
+    async readDoc(slug, version) {
+      return readDoc(s.d, needProject(), slug, version);
+    },
+    async writeDoc(doc) {
+      const res = await putDoc(s.d, { projectId: needProject(), slug: doc.slug, body: doc.body, ...(doc.title ? { title: doc.title } : {}), ...(doc.baseVersion !== undefined ? { baseVersion: doc.baseVersion } : {}), note: doc.note ?? null, actor }, index);
+      return { version: res.version, unchanged: res.unchanged };
+    },
+    async callMeeting(m) {
+      const slugs = [...new Set(m.participants.map((x) => x.replace(/^a\//, "")))];
+      const rows = await s.d.db.select({ id: agents.id, slug: agents.slug }).from(agents).where(inArray(agents.slug, slugs));
+      const missing = slugs.filter((x) => !rows.some((r) => r.slug === x));
+      if (missing.length) throw new Error(`no agent ${missing.map((x) => `a/${x}`).join(", ")}`);
+      const meeting = await startMeeting(s.d, { projectId: needProject(), topic: m.topic, agenda: m.agenda, participantIds: rows.map((r) => r.id), maxRounds: m.maxRounds ?? 3, createdBy: actor });
+      await s.boss.send(QUEUES.meetingStep, { meetingId: meeting.id, opened: 1 });
+      return { meetingId: meeting.id };
+    },
+    async runScript(path, args) {
+      const projectId = needProject();
+      const [project] = await s.d.db.select().from(projects).where(eq(projects.id, projectId));
+      const folder = await s.repos.ensure({ slug: project!.slug, repo: project!.repoFullName, baseBranch: project!.defaultBranch });
+      const source = await readFile(join(folder, path), "utf8").catch(() => null);
+      if (source === null) throw new Error(`${path} isn't in the project's code (scripts are run from its base branch: a card's script is runnable once merged)`);
+      const lang = languageOf(path);
+      if (!lang) throw new Error(`${path}: scripts are .py, .ts, .sh or .sql`);
+      const argsSchema = scriptArgs(lang, source);
+      const [sc] = await s.d.db.insert(scripts).values({ projectId, path, language: lang, argsSchema, description: scriptDescription(lang, source) })
+        .onConflictDoUpdate({ target: [scripts.projectId, scripts.path], set: { argsSchema, updatedAt: new Date() } }).returning();
+      const merged = Object.fromEntries(Object.entries(argsSchema.properties).filter(([k, p]) => args[k] !== undefined || (p as { default?: unknown }).default !== undefined).map(([k, p]) => [k, args[k] ?? (p as { default?: unknown }).default]));
+      const [run] = await s.d.db.insert(runs).values({ kind: "script", projectId, status: "queued", input: { scriptId: sc!.id, path, args: lang === "sql" ? { ...merged, ...args } : merged, trigger: actor, by: actor } }).returning({ id: runs.id });
+      await s.d.db.update(scripts).set({ lastRunId: run!.id }).where(eq(scripts.id, sc!.id));
+      await s.boss.send(QUEUES.scriptRun, { runId: run!.id });
+      const until = Date.now() + (sc!.timeoutS + 120) * 1000;
+      for (;;) {
+        const [now] = await s.d.db.select().from(runs).where(eq(runs.id, run!.id));
+        if (now && ["succeeded", "failed", "canceled", "timed_out"].includes(now.status)) {
+          const logs = await s.d.sql<{ data: { text: string } }[]>`SELECT data FROM run_events WHERE run_id = ${run!.id} AND type = 'log' ORDER BY seq DESC LIMIT 20`;
+          return { runId: run!.id, status: now.status, result: now.result, error: now.error, output: logs.reverse().map((l) => l.data.text).join("\n") };
+        }
+        if (Date.now() > until) return { runId: run!.id, status: now?.status ?? "queued", result: null, error: "still running; check the run later", output: "" };
+        await new Promise((r) => setTimeout(r, 1000));
+      }
     },
     async listCards(filter) {
       const rows = await s.d.db

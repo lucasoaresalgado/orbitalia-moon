@@ -15,8 +15,8 @@ const FILES = ["list_files", "read_file", "write_file", "edit_file"];
 
 export const DEFAULT_AGENTS = [
   {
-    slug: "iacy", name: "Iacy", role: "manager", description: "The manager: plans, splits work into cards, answers escalations.",
-    version: { model: DEFAULT_MODELS.manager, fallback_model: DEFAULT_MODELS.worker_strong, system_prompt: prompt("iacy"),
+    slug: "luna", name: "Luna", role: "manager", description: "The manager: plans, splits work into cards, answers escalations.",
+    version: { model: DEFAULT_MODELS.manager, fallback_model: DEFAULT_MODELS.worker_strong, system_prompt: prompt("luna"),
       tools: [...["create_cards", "list_cards", "notify_user", "search_notes", "load_skill"], ...BOARD, ...MEMORY].map((name) => ({ name, requires_approval: false })),
       limits: { max_turns: 12, max_tokens: 8000, compact_at_tokens: 80_000, run_budget_usd: 1, day_budget_usd: 3 } },
   },

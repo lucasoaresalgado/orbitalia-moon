@@ -64,7 +64,7 @@
   <div class="relative w-56"><Search size={13} class="absolute top-2 left-2 text-muted" /><input class="input pl-7" placeholder="Search or #number" bind:value={filter} /></div>
   {#if error}<span class="border-l-2 border-bad pl-2 text-[12px] text-bad">{error}</span>{/if}
   <button class="btn ml-auto" onclick={() => (creating = true)} title="New card (n)"><Plus size={14} /> Card</button>
-  <button class="btn" disabled title="Meetings arrive in Phase 3">Meeting</button>
+  <a class="btn" href="/meetings?project={data.project.slug}#start" title="Start a meeting of agents on this project">Meeting</a>
 </div>
 
 <div class="flex h-[calc(100%-45px)] gap-3 overflow-x-auto p-3">

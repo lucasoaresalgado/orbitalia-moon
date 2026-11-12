@@ -1,9 +1,7 @@
 import { fail, redirect } from "@sveltejs/kit";
 import { audit } from "@miniasys/db";
-import { checkPassword, createSession, destroySession } from "#lib/server/auth.ts";
+import { checkPassword, createSession, destroySession, tooManyAttempts } from "#lib/server/auth.ts";
 import { db, server } from "#lib/server/db.ts";
-
-const attempts: number[] = [];
 
 export const load = ({ locals }) => {
   if (locals.authed) redirect(303, "/");
@@ -12,11 +10,7 @@ export const load = ({ locals }) => {
 
 export const actions = {
   login: async ({ request, cookies, url }) => {
-    // a little friction against guessing: 10 tries a minute for the whole app
-    const now = Date.now();
-    while (attempts.length && now - attempts[0]! > 60_000) attempts.shift();
-    if (attempts.length >= 10) return fail(429, { error: "Too many attempts. Wait a minute." });
-    attempts.push(now);
+    if (tooManyAttempts()) return fail(429, { error: "Too many attempts. Wait a minute." });
     const form = await request.formData();
     if (!(await checkPassword(String(form.get("password") ?? "")))) {
       await audit(db(), "user", "login.failed");

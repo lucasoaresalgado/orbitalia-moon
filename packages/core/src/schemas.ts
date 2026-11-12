@@ -100,6 +100,36 @@ export const MeetingUpdate = z.object({
   questions: z.array(z.object({ to: z.string(), question: z.string() })).default([]),
 });
 
+export const MeetingQuestion = z.object({ to: z.string().min(1).describe('the agent slug it is for, or "lucas"'), question: z.string().min(1).max(2000) });
+export const MeetingActionItem = z.object({
+  title: z.string().min(3).max(120),
+  kind: z.enum(["code", "data", "research", "ops"]).default("code"),
+  priority: z.enum(["low", "medium", "high", "urgent"]).default("medium"),
+  assignee: z.string().nullable().optional().describe("agent slug that should do it"),
+  description: z.string().max(4000).optional(),
+});
+
+/**
+ * One participant's turn in a meeting round (scope §9): round 1 is an update
+ * (done, next, blockers); later rounds answer the questions addressed to you.
+ * Any round may ask questions and propose action items (they become cards).
+ */
+export const MeetingTurn = z.object({
+  done: z.string().max(4000).optional(),
+  next: z.string().max(4000).optional(),
+  blockers: z.string().max(4000).optional(),
+  answers: z.array(z.object({ to: z.string(), question: z.string().max(2000), answer: z.string().max(4000) })).max(10).default([]),
+  questions: z.array(MeetingQuestion).max(5).default([]),
+  action_items: z.array(MeetingActionItem).max(10).default([]),
+  text: z.string().max(8000).optional().describe("anything else to say"),
+});
+export type MeetingTurn = z.infer<typeof MeetingTurn>;
+
+export const MeetingMinutes = z.object({
+  minutes: z.string().describe("markdown: decisions, agreements, unresolved items"),
+  action_items: z.array(MeetingActionItem).max(20).default([]),
+});
+
 // ------------------------------------------------------------------ review
 
 export const ReviewOutput = z.object({

@@ -1,0 +1,12 @@
+.git
+**/node_modules
+**/.svelte-kit
+**/build
+.env
+.env.*
+!.env.example
+data
+workspaces
+lakehouse
+coverage
+sandbox

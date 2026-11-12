@@ -5,7 +5,11 @@ import { and, eq, sql } from "drizzle-orm";
 import { publish, type Database } from "./index.ts";
 import { cardEvents, cards, plans, projects } from "./schema.ts";
 
-export type Actor = "user" | "system" | `agent:${string}`;
+/** who did it: Lucas in the UI (user), Lucas through a named API token (user:<token>), an agent, or the system */
+export type Actor = "user" | `user:${string}` | "system" | `agent:${string}`;
+
+/** the state machine's view of an actor: Lucas (by any door), the system, or an agent */
+export const actorKind = (a: Actor): "user" | "agent" | "system" => (a === "system" ? "system" : a.startsWith("agent:") ? "agent" : "user");
 
 export async function cardEvent(d: Database, cardId: string, actor: Actor, type: string, payload: unknown, extra: { durationMs?: number; tokens?: number; costUsd?: number } = {}) {
   const [card] = await d.db.select({ projectId: cards.projectId }).from(cards).where(eq(cards.id, cardId));
@@ -21,7 +25,7 @@ export async function moveCard(d: Database, cardId: string, to: CardStatus, acto
   const [project] = await d.db.select({ repo: projects.repoFullName }).from(projects).where(eq(projects.id, card.projectId));
   const t = transition(from, to, {
     kind: card.kind as CardKind,
-    actor: actor === "user" ? "user" : actor === "system" ? "system" : "agent",
+    actor: actorKind(actor),
     ...(o.blockedReason ? { blockedReason: o.blockedReason } : {}),
     reviewLoops: card.reviewLoops,
     hasRepo: !!project?.repo,
@@ -94,7 +98,7 @@ export async function approvePlan(d: Database, planId: string): Promise<string[]
       const card = await createCard(
         d, plan.projectId,
         { title: c.title, kind: c.kind, brief: null, acceptanceCriteria: c.acceptance_criteria, priority: c.priority, source: "manager", planId, planKey: c.key },
-        "agent:iacy",
+        "agent:luna",
       );
       if (card) ids.push(card.id);
     }

@@ -9,16 +9,19 @@ import { PgBoss } from "pg-boss";
 import pino from "pino";
 import Anthropic from "@anthropic-ai/sdk";
 import { Envelope, loadConfig, parseMasterKey, PG_CHANNEL, type BusEvent } from "@miniasys/core";
-import { cards, connect, managerMessages, runs, eq, and, or, lte, getSetting, setSetting, SETTINGS, DEFAULT_MODELS, DEFAULT_SANDBOX, type ModelSettings, type SandboxSettings } from "@miniasys/db";
+import { cards, connect, managerMessages, projects, runs, eq, and, or, lte, ne, getSetting, setSetting, SETTINGS, DEFAULT_MODELS, DEFAULT_SANDBOX, type ModelSettings, type SandboxSettings } from "@miniasys/db";
 import { runMigrations } from "@miniasys/db/migrate";
 import { seed } from "@miniasys/db/seed";
-import { ClaudeDecisionEngine, ColibriEngine, Decider, OllamaEmbeddings } from "@miniasys/llm";
+import { ClaudeDecisionEngine, ColibriEngine, Decider, OllamaDecisionEngine, OllamaEmbeddings } from "@miniasys/llm";
 import { SandboxRunner } from "@miniasys/sandbox";
 import { defaultRegistry } from "@miniasys/tools";
 import { systemBlocks } from "./agent/context.ts";
+import { Meetings } from "./meetings.ts";
+import { ScriptRunner } from "./scripts.ts";
 import { Budgets } from "./budgets.ts";
 import { Executor } from "./executor.ts";
 import { GitHub } from "./github.ts";
+import { ProjectRepos } from "@miniasys/projects";
 import { Journal } from "./journal.ts";
 import { embedNote } from "./knowledge.ts";
 import { singleCall } from "./engine.ts";
@@ -51,6 +54,7 @@ const modelSettings = await getSetting<ModelSettings>(d.db, SETTINGS.models, DEF
 const sandboxSettings = await getSetting<SandboxSettings>(d.db, SETTINGS.sandbox, DEFAULT_SANDBOX);
 const decider = new Decider(
   modelSettings.colibri_decision_model ? new ColibriEngine(config.colibriUrl, modelSettings.colibri_decision_model) : null,
+  modelSettings.local_decision_model ? new OllamaDecisionEngine(config.ollamaUrl, modelSettings.local_decision_model) : null,
   anthropic ? new ClaudeDecisionEngine(anthropic, modelSettings.decisions_fallback) : null,
 );
 const publicUrl = process.env.PUBLIC_URL ?? "http://127.0.0.1:3000";
@@ -58,8 +62,9 @@ const notifier = new Notifier(d, config.ntfy, publicUrl, log);
 const github = config.github?.privateKey && config.github.installationId ? new GitHub({ appId: config.github.appId, privateKey: config.github.privateKey, installationId: config.github.installationId }) : null;
 const envelope = new Envelope(parseMasterKey(config.masterKey ?? undefined));
 
+const repos = new ProjectRepos(config.projectsDir, github ? () => github.gitToken() : null);
 const s: Services = {
-  config, d, log, boss, models, decider, notifier, github, envelope,
+  config, d, log, boss, models, decider, notifier, github, envelope, repos,
   sandbox: new SandboxRunner(config.podmanSocket, sandboxSettings.maxConcurrent, config.logDir, config.containerRuntime),
   budgets: new Budgets(d, config.timeZone, notifier),
   journal: new Journal(d),
@@ -71,8 +76,10 @@ if (!sandboxHealth.ok) {
   log.warn({ err: sandboxHealth.error, runtime: config.containerRuntime }, "container socket unreachable: sandboxes are off until it is up");
 }
 
-const ws = new Workspaces(config.workspacesDir, github ? () => github.gitToken() : null);
+const ws = new Workspaces(config.workspacesDir, github ? () => github.gitToken() : null, repos);
 const pipeline = new Pipeline(s, ws);
+const meetingRunner = new Meetings(s);
+const scriptRunner = new ScriptRunner(s);
 const executor = new Executor(s, ws, (run, status) => pipeline.onRunFinished(run, status));
 
 // ------------------------------------------------------------------ queues
@@ -107,6 +114,14 @@ await queue(QUEUES.dailyReport, () => dailyReport(), { retryLimit: 1 });
 await queue(QUEUES.sweep, () => sweep(), { retryLimit: 0 });
 await queue(QUEUES.backup, () => backup(), { retryLimit: 2 });
 await queue<{ cardId: string }>(QUEUES.cardNote, (j) => pipeline.note(j.cardId));
+await queue<{ cardId: string; actor: string }>(QUEUES.cardMerge, (j) => pipeline.merge(j.cardId, j.actor), { retryLimit: 1 });
+await queue<{ projectId: string; sync?: boolean }>(QUEUES.projectEnsure, (j) => pipeline.ensureProject(j.projectId, j.sync), { retryLimit: 3 });
+await queue<{ projectId: string }>(QUEUES.projectPublish, (j) => pipeline.publishEdits(j.projectId), { retryLimit: 2 });
+// scripts (scope §26): runs, scheduled runs, and keeping pg-boss's schedules in line with the scripts table
+await queue<{ runId: string }>(QUEUES.scriptRun, (j) => scriptRunner.run(j.runId), { retryLimit: 0 });
+await queue<{ scriptId: string }>(QUEUES.scriptScheduled, (j) => scriptRunner.scheduled(j.scriptId), { retryLimit: 0 });
+await queue<{ scriptId?: string; projectId?: string }>(QUEUES.scriptSchedule, (j) => syncSchedules(j), { retryLimit: 2 });
+await queue<{ meetingId: string; opened?: number }>(QUEUES.meetingStep, (j) => meetingRunner.step(j.meetingId, j.opened), { retryLimit: 2 });
 await queue<{ agentSlug: string; sources: string[] }>(QUEUES.cortexBuild, async (j) => {
   // the agent's map of the storage: every markdown and parquet file under its sources, embedded when Ollama answers
   const r = await buildIndex({ file: cortexFile(config.cortexDir, j.agentSlug), root: config.lakehouseDir, sources: j.sources, embed: (t) => s.embeddings.embed(t) });
@@ -121,17 +136,17 @@ await boss.schedule(QUEUES.dailyReport, "0 8 * * *", null, { tz });
 await boss.schedule(QUEUES.backup, "0 2 * * *", null, { tz });
 
 async function dailyReport() {
-  const [iacy] = await d.sql<{ id: string; model: string; system_prompt: string }[]>`
-    SELECT a.id, v.model, v.system_prompt FROM agents a JOIN agent_versions v ON v.id = a.active_version_id WHERE a.slug = 'iacy'`;
-  if (!iacy) return;
-  const system = await systemBlocks(s, { prompt: iacy.system_prompt, tools: [], role: "manager", project: null, card: null });
-  const [run] = await d.db.insert(runs).values({ kind: "report", status: "running", model: iacy.model, startedAt: new Date() }).returning();
+  const [luna] = await d.sql<{ id: string; model: string; system_prompt: string }[]>`
+    SELECT a.id, v.model, v.system_prompt FROM agents a JOIN agent_versions v ON v.id = a.active_version_id WHERE a.slug = 'luna'`;
+  if (!luna) return;
+  const system = await systemBlocks(s, { prompt: luna.system_prompt, tools: [], role: "manager", project: null, card: null });
+  const [run] = await d.db.insert(runs).values({ kind: "report", status: "running", model: luna.model, startedAt: new Date() }).returning();
   const { text } = await singleCall(s, {
-    role: "manager", runId: run!.id, scope: { agentId: iacy.id }, model: iacy.model, system, effort: "low", maxOutputTokens: 1200,
+    role: "manager", runId: run!.id, scope: { agentId: luna.id }, model: luna.model, system, effort: "low", maxOutputTokens: 1200,
     prompt: "Write today's daily report for Lucas: what moved since yesterday, what is blocked and why, spend against budget, PRs waiting for his merge. Ten lines at most.",
   });
   await d.db.update(runs).set({ status: "succeeded", finishedAt: new Date(), summary: text.slice(0, 500) }).where(eq(runs.id, run!.id));
-  await d.db.insert(managerMessages).values({ projectId: null, role: "assistant", content: { text: `**Daily report**\n\n${text}` }, model: iacy.model });
+  await d.db.insert(managerMessages).values({ projectId: null, role: "assistant", content: { text: `**Daily report**\n\n${text}` }, model: luna.model });
   await notifier.notify({ level: "info", title: "Daily report", body: text.slice(0, 3000), link: "/manager", ntfy: "low" });
 }
 
@@ -154,6 +169,18 @@ async function backup() {
   await setSetting(d.db, "last_backup", { at: new Date().toISOString(), ok: true });
 }
 
+/** Puts the scripts' schedules (one per script, keyed by its id) in pg-boss; none for disabled, deleted or gone scripts. */
+async function syncSchedules(o: { scriptId?: string; projectId?: string } = {}) {
+  const rows = await d.sql<{ id: string; schedule: string | null; schedule_enabled: boolean; deleted: boolean }[]>`
+    SELECT s.id, s.schedule, s.schedule_enabled, p.status = 'deleted' AS deleted FROM scripts s JOIN projects p ON p.id = s.project_id
+    WHERE (${o.scriptId ?? null}::uuid IS NULL OR s.id = ${o.scriptId ?? null}) AND (${o.projectId ?? null}::uuid IS NULL OR s.project_id = ${o.projectId ?? null})`;
+  if (o.scriptId && !rows.length) return boss.unschedule(QUEUES.scriptScheduled, o.scriptId);
+  for (const r of rows) {
+    if (r.schedule && r.schedule_enabled && !r.deleted) await boss.schedule(QUEUES.scriptScheduled, r.schedule, { scriptId: r.id }, { tz: config.timeZone, key: r.id });
+    else await boss.unschedule(QUEUES.scriptScheduled, r.id);
+  }
+}
+
 // ------------------------------------------------------------------ live wake-ups from the web app
 
 await d.sql.listen(PG_CHANNEL, (payload) => {
@@ -161,7 +188,10 @@ await d.sql.listen(PG_CHANNEL, (payload) => {
     const ev = JSON.parse(payload) as BusEvent;
     if (ev.topic !== "runs") return;
     if (ev.type === "queued") void executor.recover();
-    if (ev.type === "cancel") executor.cancel((ev.data as { id: string }).id);
+    if (ev.type === "cancel") {
+      executor.cancel((ev.data as { id: string }).id);
+      scriptRunner.cancel((ev.data as { id: string }).id);
+    }
     if (ev.type === "pause") for (const id of executor.active) executor.cancel(id);
   } catch {
     /* not ours */
@@ -170,6 +200,9 @@ await d.sql.listen(PG_CHANNEL, (payload) => {
 
 executor.watch();
 const n = await executor.recover();
+// every live project has its code folder (scope §26): created, or cloned from GitHub, in the background
+for (const p of await d.db.select({ id: projects.id }).from(projects).where(ne(projects.status, "deleted"))) await boss.send(QUEUES.projectEnsure, { projectId: p.id }, { singletonKey: p.id });
+await syncSchedules();
 log.info({ resumed: n, sandbox: sandboxHealth.ok, github: !!github, anthropic: models.configured }, "worker ready");
 
 const shutdown = async () => {

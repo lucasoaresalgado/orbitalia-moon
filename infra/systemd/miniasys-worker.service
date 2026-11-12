@@ -2,7 +2,7 @@
 # The worker: queue consumer, agent loop, sandboxes, schedules (scope §5).
 # Secrets come in as systemd credentials, never from the repository.
 [Unit]
-Description=Miniasys worker
+Description=Orbitalia Moon worker
 After=network-online.target podman.socket
 Wants=podman.socket
 

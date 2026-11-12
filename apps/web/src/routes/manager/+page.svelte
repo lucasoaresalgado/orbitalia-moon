@@ -3,5 +3,5 @@
   import { page } from "$app/state";
 </script>
 
-<svelte:head><title>Manager · Miniasys</title></svelte:head>
+<svelte:head><title>Manager · Orbitalia Moon</title></svelte:head>
 <div class="h-full"><ManagerChat scope={page.data.scope} /></div>

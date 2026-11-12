@@ -28,7 +28,7 @@
   ]);
 </script>
 
-<svelte:head><title>Costs · Miniasys</title></svelte:head>
+<svelte:head><title>Costs · Orbitalia Moon</title></svelte:head>
 <div class="mx-auto max-w-6xl space-y-4 p-5">
   <div class="flex items-center gap-2">
     <h2 class="text-[15px] font-semibold">Costs</h2>
@@ -76,7 +76,7 @@
     <div class="panel">
       <div class="label px-3 pt-3">Most expensive cards</div>
       {#each data.topCards as c}
-        <a class="row" href="/cards/{c.slug}/{c.number}"><span class="mono w-28 text-muted">p/{c.slug}#{c.number}</span><span class="flex-1 truncate">{c.title}</span><span class="text-muted">{c.status}</span><span class="num w-16 text-right">{usd(c.usd)}</span></a>
+        <a class="row" href="/cards/{c.slug}/{c.number}"><span class="mono w-36 shrink-0 truncate text-muted" title="p/{c.slug}#{c.number}">p/{c.slug}#{c.number}</span><span class="flex-1 truncate">{c.title}</span><span class="text-muted">{c.status}</span><span class="num w-16 text-right">{usd(c.usd)}</span></a>
       {:else}<p class="px-3 pb-3 text-muted">No card spend yet.</p>{/each}
     </div>
   </div>

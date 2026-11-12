@@ -1,0 +1,6 @@
+ms_sans_serif*.woff2 come from 98.css 0.1.21 (https://github.com/jdan/98.css, MIT).
+
+The FontStruction “MS Sans Serif”
+(https://fontstruct.com/fontstructions/show/1384746) by “lou” is licensed
+under a Creative Commons Attribution Share Alike license
+(http://creativecommons.org/licenses/by-sa/3.0/).

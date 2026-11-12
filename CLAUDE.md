@@ -1,4 +1,4 @@
-# Miniasys: notes for agents working on this repo
+# Orbitalia Moon: notes for agents working on this repo
 
 - The design is `docs/scope.md`; code comments cite its sections (§). Change the scope first when a change contradicts it.
 - TypeScript everywhere, ESM, imports with explicit `.ts` extensions. The web app imports its own code through `#lib/*` (SvelteKit 3 subpath imports, not `$lib`).

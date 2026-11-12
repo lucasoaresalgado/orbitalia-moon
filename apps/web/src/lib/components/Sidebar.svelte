@@ -29,12 +29,12 @@
       { href: "/manager", label: "Manager", icon: Bot },
       { href: board, label: "Board", icon: LayoutGrid, match: "/projects" },
       { href: "/agents", label: "Agents", icon: Boxes },
+      { href: "/meetings", label: "Meetings", icon: Users },
       { href: "/runs", label: "Runs", icon: Play },
       { href: "/costs", label: "Costs", icon: DollarSign },
       { href: "/inbox", label: "Inbox", icon: Inbox, count: data.inbox },
     ] },
     { title: "Later", items: [
-      { href: "/meetings", label: "Meetings", icon: Users, disabled: true },
       { href: "/lakehouse", label: "Lakehouse", icon: Database, disabled: true },
     ] },
     { title: "Admin", items: [
@@ -47,10 +47,10 @@
   const pct = $derived(data.unit === "tokens" ? (data.dailyTokenLimit ? data.tokensToday / data.dailyTokenLimit : 0) : data.dailyLimit ? data.spendToday / data.dailyLimit : 0);
 </script>
 
-<nav class="flex shrink-0 flex-col border-r border-line bg-surface-1 transition-[width] duration-200 {collapsed ? 'w-12' : 'w-52'}" aria-label="Main">
+<nav class="sidebar flex shrink-0 flex-col border-r border-line bg-surface-1 transition-[width] duration-200 {collapsed ? 'w-12' : 'w-52'}" aria-label="Main">
   <div class="flex h-11 items-center gap-2 border-b border-line px-3">
     <svg viewBox="0 0 32 32" class="h-5 w-5 shrink-0" aria-hidden="true"><circle cx="16" cy="16" r="8" fill="var(--opus)" /><circle cx="16" cy="16" r="13" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="3 4" /><circle cx="27.5" cy="10" r="2.2" fill="var(--haiku)" /></svg>
-    {#if !collapsed}<span class="font-semibold tracking-tight">Miniasys</span>{/if}
+    {#if !collapsed}<span class="font-semibold tracking-tight">Orbitalia Moon</span>{/if}
     <button class="ml-auto text-muted hover:text-fg" onclick={toggle} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
       {#if collapsed}<PanelLeftOpen size={15} />{:else}<PanelLeftClose size={15} />{/if}
     </button>

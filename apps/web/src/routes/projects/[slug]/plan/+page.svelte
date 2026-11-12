@@ -11,7 +11,7 @@
   let sel = $state<string | null>(null);
   const plan = $derived(data.plans.find((p) => p.id === sel) ?? data.plans[0]);
   async function decide(decision: "approve" | "reject") {
-    const comment = decision === "reject" ? (prompt("Why? (Iacy reads this)") ?? "") : "";
+    const comment = decision === "reject" ? (prompt("Why? (Luna reads this)") ?? "") : "";
     await api(`/api/approvals/${plan!.approval_id}`, { body: { decision, comment } });
     await invalidateAll();
   }
@@ -24,7 +24,7 @@
       <button class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left {plan?.id === p.id ? 'bg-surface-3' : 'hover:bg-surface-2'}" onclick={() => (sel = p.id)}>
         <span class="mono">v{p.version}</span><StatusBadge status={p.status === "draft" ? "pending" : p.status === "superseded" ? "canceled" : p.status} compact /><span class="text-muted">{p.status}</span>
       </button>
-    {:else}<p class="px-1 text-muted">No plans yet. Ask Iacy for one.</p>{/each}
+    {:else}<p class="px-1 text-muted">No plans yet. Ask Luna for one.</p>{/each}
   </aside>
   <div class="min-w-0 flex-1 overflow-y-auto p-5">
     {#if plan}

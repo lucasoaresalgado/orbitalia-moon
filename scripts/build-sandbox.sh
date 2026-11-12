@@ -22,6 +22,7 @@ echo "== workspace is writable";      run 'touch /workspace/x && echo ok'
 echo "== .git is read-only";          run 'touch /workspace/.git/hooks/pre-commit 2>/dev/null && echo FAIL || echo ok'
 echo "== root fs is read-only";       run 'touch /usr/x 2>/dev/null && echo FAIL || echo ok'
 echo "== no network";                 run 'curl -sS -m 5 https://example.com >/dev/null 2>&1 && echo FAIL || echo ok'
-echo "== pids limit stops fork bombs"; run 'for i in $(seq 1 400); do sleep 5 & done 2>/dev/null; echo "started $(jobs -p | wc -l) (cap 256)"'
-echo "== memory limit";               run 'python3 -c "b = bytearray(1500*1024*1024)" 2>/dev/null && echo FAIL || echo ok (killed past 1 GB)'
+# at the cap, forks fail and the shell itself usually dies (podman exits 254): both mean the limit held
+echo "== pids limit stops fork bombs"; run 'for i in $(seq 1 400); do sleep 5 & done 2>/dev/null; echo "started $(jobs -p | wc -l) (cap 256)"' 2>/dev/null || echo "ok (forks refused at the cap)"
+echo "== memory limit";               run 'python3 -c "b = bytearray(1500*1024*1024)" 2>/dev/null && echo FAIL || echo ok, killed past 1 GB'
 echo "== tools";                      run 'node -v && python3 -V && duckdb --version && gitleaks version && git --version'

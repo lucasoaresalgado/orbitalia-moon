@@ -36,7 +36,7 @@
   }
 </script>
 
-<svelte:head><title>Runs · Miniasys</title></svelte:head>
+<svelte:head><title>Runs · Orbitalia Moon</title></svelte:head>
 <div class="p-4">
   <div class="mb-2 flex items-center gap-2">
     <select class="input w-32" value={data.range} onchange={(e) => goto(`?range=${(e.target as HTMLSelectElement).value}`)} aria-label="Range">

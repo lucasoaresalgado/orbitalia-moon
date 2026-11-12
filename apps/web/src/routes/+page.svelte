@@ -13,7 +13,7 @@
   const f = (s: string) => s.toLowerCase().includes(q.toLowerCase());
 </script>
 
-<svelte:head><title>Miniasys</title></svelte:head>
+<svelte:head><title>Orbitalia Moon</title></svelte:head>
 
 <div class="mx-auto max-w-5xl p-6">
   <div class="mb-4 flex gap-2">
@@ -38,7 +38,7 @@
         <li>Put the Anthropic API key in its credential file and set a spend limit in the Anthropic Console (<a class="text-accent" href="/settings">Settings → Models</a>).</li>
         <li>Connect the GitHub App (<a class="text-accent" href="/settings#connections">Settings → Connections</a>).</li>
         <li><a class="text-accent" href="/projects/new">Create a project</a>.</li>
-        <li>Talk to Iacy in the <a class="text-accent" href="/manager">Manager</a>.</li>
+        <li>Talk to Luna in the <a class="text-accent" href="/manager">Manager</a>.</li>
       </ol>
     </div>
   {/if}

@@ -74,4 +74,4 @@ Next: set the login password:
   pnpm --filter @miniasys/web hash-password   # paste the hash into APP_PASSWORD_HASH in .env
   systemctl --user restart miniasys-web"
 echo "
-Miniasys is at http://127.0.0.1:3000"
+Orbitalia Moon is at http://127.0.0.1:3000"

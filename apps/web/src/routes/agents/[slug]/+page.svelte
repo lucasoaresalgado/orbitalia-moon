@@ -7,6 +7,7 @@
   import { ArrowLeft, History, Play, Save, Rocket } from "@lucide/svelte";
   import Transcript from "#lib/components/Transcript.svelte";
   import Drawer from "#lib/components/Drawer.svelte";
+  import ExternalAgent from "#lib/components/ExternalAgent.svelte";
   import { api } from "#lib/api.ts";
   import { estimateTokens } from "@miniasys/core/shared";
 
@@ -103,6 +104,9 @@
 
 <svelte:head><title>a/{data.agent.slug} · Agent</title></svelte:head>
 
+{#if data.agent.runtime === "external"}
+<ExternalAgent agent={data.agent} assigned={data.assigned} activity={data.activity} />
+{:else}
 <div class="flex h-full flex-col">
   <div class="flex items-center gap-3 border-b border-line bg-surface-1 px-4 py-2">
     <a href="/agents" class="text-muted hover:text-fg" aria-label="Back"><ArrowLeft size={15} /></a>
@@ -227,3 +231,4 @@
     <button class="btn btn-primary" onclick={deploy}><Rocket size={13} /> Deploy</button>
   </div>
 </Drawer>
+{/if}

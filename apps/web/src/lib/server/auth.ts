@@ -11,6 +11,17 @@ export const COOKIE = "miniasys_session";
 const DAYS = 30;
 const hashToken = (t: string) => createHash("sha256").update(t).digest("hex");
 
+const attempts: number[] = [];
+
+/** A little friction against guessing: 10 password tries a minute for the whole app (login and token exchange). */
+export function tooManyAttempts(): boolean {
+  const now = Date.now();
+  while (attempts.length && now - attempts[0]! > 60_000) attempts.shift();
+  if (attempts.length >= 10) return true;
+  attempts.push(now);
+  return false;
+}
+
 export async function checkPassword(password: string): Promise<boolean> {
   const h = server().config.passwordHash;
   if (!h) return false;

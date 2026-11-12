@@ -2,9 +2,9 @@
 // worker run → deterministic checks → risk class → review → pull request →
 // merge detected by polling. Each step is a pg-boss job, so a step that fails
 // is retried and nothing depends on the laptop staying awake.
-import { cardPath, PlanContent, ReviewOutput, type CallScope } from "@miniasys/core";
+import { cardPath, CHANNELS, PlanContent, ReviewOutput, type CallScope } from "@miniasys/core";
 import {
-  agents, agentVersions, cardEvent, cards, decisions, moveCard, plans, projects, runs, and, eq, inArray, getSetting, publish, SETTINGS,
+  agents, agentVersions, approvals, cardEvent, cards, decisions, moveCard, plans, projects, runs, and, eq, inArray, getSetting, publish, setSetting, SETTINGS,
   DEFAULT_MODELS, type ModelSettings,
 } from "@miniasys/db";
 import { z } from "zod";
@@ -13,6 +13,7 @@ import { addNote } from "./knowledge.ts";
 import { CardDeleted } from "./errors.ts";
 import { singleCall } from "./engine.ts";
 import { QUEUES, type Services } from "./services.ts";
+import { MergeConflict } from "@miniasys/projects";
 import type { CardRef, Workspaces } from "./workspaces.ts";
 
 type Card = typeof cards.$inferSelect;
@@ -96,9 +97,22 @@ export class Pipeline {
     await this.s.boss.send(QUEUES.cardRoute, { cardId: card.id }, { singletonKey: card.id });
   }
 
+  /** The card's assignee when it's an external agent (a harness does the work; the worker never runs it). */
+  private async externalAssignee(card: { assigneeAgentId: string | null }) {
+    if (!card.assigneeAgentId) return null;
+    const [a] = await this.s.d.db.select().from(agents).where(eq(agents.id, card.assigneeAgentId));
+    return a?.runtime === "external" ? a : null;
+  }
+
   async route(cardId: string) {
     const { card, project } = await this.load(cardId);
     if (card.status !== "ready") return;
+    // a card given to an external agent waits for its harness to pick it up
+    const ext = await this.externalAssignee(card);
+    if (ext) {
+      await cardEvent(this.s.d, cardId, "system", "log", { text: `ready for external agent a/${ext.slug}; its harness picks it up` });
+      return;
+    }
     const input = { title: card.title, kind: card.kind, brief: card.brief, criteria: card.acceptanceCriteria, project: project.slug };
     const triage = await this.decide("triage", input, { cardId });
     if (triage.output) await this.s.d.db.update(cards).set({ priority: triage.output.priority }).where(eq(cards.id, cardId));
@@ -119,6 +133,8 @@ export class Pipeline {
     const [active] = await this.s.d.db.select({ id: runs.id }).from(runs).where(and(eq(runs.cardId, cardId), inArray(runs.status, ACTIVE)));
     if (active) return;
     const [agent] = card.assigneeAgentId ? await this.s.d.db.select().from(agents).where(eq(agents.id, card.assigneeAgentId)) : [];
+    // an external agent's harness works the card (and reads its notes) itself
+    if (agent?.runtime === "external") return;
     const a = agent ?? (await this.agentVersion("dev"))?.agents;
     if (!a?.activeVersionId) throw new Error("the card's agent has no deployed version");
     const models = await this.models();
@@ -152,6 +168,8 @@ export class Pipeline {
     if (active) return;
     // backlog and ready cards read their notes when they start; a done card stays done
     if (["backlog", "ready", "done"].includes(card.status)) return;
+    // an external agent's harness reads notes with cards.get; nothing to start here
+    if (await this.externalAssignee(card)) return;
     if (card.status !== "in_progress") await moveCard(this.s.d, cardId, "in_progress", "system", { note: "Lucas left a note" });
     await this.startWork(cardId, { feedback: "Lucas left a note on this card (below). Act on it." });
     await this.s.notifier.notify({ level: "info", title: `${cardPath(project.slug, card.number)} is working on your note`, link: `/cards/${project.slug}/${card.number}` });
@@ -226,6 +244,8 @@ export class Pipeline {
       await addNote(this.s, { projectId: project.id, sourceType: "review", sourceId: card.id, content: `${review.verdict}: ${review.summary}\n${review.comments.map((c) => `${c.file}:${c.line ?? ""} ${c.comment}`).join("\n")}` });
       if (review.verdict === "approve") {
         if (project.repoFullName && card.kind === "code") await this.s.boss.send(QUEUES.cardPr, { cardId, review: review.summary }, { singletonKey: cardId });
+        // the project's code lives in its folder (scope §26): a change reaches it only when Lucas approves the merge
+        else if (await this.ws.changed(ref)) await this.askToMerge(card, project, ref, review.summary);
         else await moveCard(this.s.d, cardId, "done", "agent:reviewer");
         return;
       }
@@ -238,6 +258,68 @@ export class Pipeline {
       await this.s.d.db.update(runs).set({ status: "failed", error: (e as Error).message, finishedAt: new Date() }).where(eq(runs.id, run!.id));
       throw e;
     }
+  }
+
+  /** Asks Lucas to merge an approved card into the project folder (a "merge" approval in the inbox). */
+  private async askToMerge(card: Card, project: Project, ref: CardRef, reviewSummary: string) {
+    const d = await this.ws.diff(ref);
+    const where = cardPath(project.slug, card.number);
+    const [ap] = await this.s.d.db.insert(approvals).values({
+      kind: "merge", cardId: card.id,
+      request: { cardId: card.id, card: where, title: card.title, branch: card.branch, files: d.files.slice(0, 50), insertions: d.insertions, deletions: d.deletions, review: reviewSummary.slice(0, 2000) },
+    }).returning({ id: approvals.id });
+    await publish(this.s.d.sql, { topic: CHANNELS.inbox, type: "approval", data: { id: ap!.id, kind: "merge" } });
+    await cardEvent(this.s.d, card.id, "system", "log", { message: `approved by the reviewer; waiting for Lucas to merge into p/${project.slug} (${d.files.length} files, +${d.insertions} -${d.deletions})` });
+    await this.s.notifier.notify({ level: "warn", title: `Merge ${where}? ${card.title}`, body: `${d.files.length} files, +${d.insertions} -${d.deletions}. ${reviewSummary.slice(0, 300)}`, link: "/inbox", ntfy: "default" });
+  }
+
+  /** Lucas approved the merge: the card's branch goes into the project folder, and the card is done. */
+  async merge(cardId: string, actor: string) {
+    const { card, project, ref } = await this.load(cardId);
+    try {
+      const r = await this.ws.merge(ref, actor);
+      await cardEvent(this.s.d, cardId, "system", "commit", { message: `merged into p/${project.slug} ${project.defaultBranch}`, sha: r.sha });
+      if (card.status !== "done") await moveCard(this.s.d, cardId, "done", "system", { note: `merged by ${actor}` });
+      const [last] = await this.s.d.db.select({ summary: runs.summary }).from(runs).where(and(eq(runs.cardId, card.id), eq(runs.kind, "agent"), eq(runs.status, "succeeded"))).orderBy(runs.createdAt);
+      await addNote(this.s, { projectId: project.id, sourceType: "card_summary", sourceId: card.id, content: `${card.title}\n\n${card.brief ?? ""}\n\n${last?.summary ?? ""}` });
+      await publish(this.s.d.sql, { topic: CHANNELS.files(project.id), type: "merged", data: { cardId, sha: r.sha } });
+    } catch (e) {
+      if (!(e instanceof MergeConflict)) throw e;
+      await moveCard(this.s.d, cardId, "blocked", "system", { blockedReason: "needs_input", note: `can't merge: ${e.message}` }).catch(() => {});
+      await this.s.notifier.notify({ level: "warn", title: `${cardPath(project.slug, card.number)} conflicts with ${project.defaultBranch}`, body: e.message, link: `/cards/${project.slug}/${card.number}`, ntfy: "default" });
+    }
+  }
+
+  /** Makes sure a project's folder exists (a clone of its GitHub repository, when linked). */
+  async ensureProject(projectId: string, sync = false) {
+    const [p] = await this.s.d.db.select().from(projects).where(eq(projects.id, projectId));
+    if (!p || p.status === "deleted") return;
+    const ref = { slug: p.slug, repo: p.repoFullName, baseBranch: p.defaultBranch };
+    await this.s.repos.ensure(ref);
+    if (sync && p.repoFullName) {
+      const r = await this.s.repos.syncFromGitHub(ref);
+      if (r.changed) await publish(this.s.d.sql, { topic: CHANNELS.files(p.id), type: "synced", data: { sha: r.sha } });
+    }
+  }
+
+  /**
+   * Changes made in Orbitalia Moon to a GitHub-linked project's folder are pushed to
+   * agent/<slug>-miniasys with one standing PR: only Lucas merges into the base branch.
+   */
+  async publishEdits(projectId: string) {
+    const [p] = await this.s.d.db.select().from(projects).where(eq(projects.id, projectId));
+    if (!p?.repoFullName || !this.s.github) return;
+    const branch = await this.s.repos.pushMiniasysBranch({ slug: p.slug, repo: p.repoFullName, baseBranch: p.defaultBranch });
+    if (!branch) return;
+    const key = `miniasys_pr:${p.id}`;
+    const open = await getSetting<{ number: number; url: string } | null>(this.s.d.db, key, null);
+    if (open) {
+      const st = await this.s.github.pullState(p.repoFullName, open.number).catch(() => null);
+      if (st && st.state === "open") return;
+    }
+    const pr = await this.s.github.openPullRequest(p.repoFullName, { head: branch, base: p.defaultBranch, title: `Changes made in Orbitalia Moon (p/${p.slug})`, body: "Edits to this project's code made in Orbitalia Moon (the UI, the CLI, the MCP server or its scripts editor). Only Lucas merges." });
+    await setSetting(this.s.d.db, key, pr);
+    await this.s.notifier.notify({ level: "info", title: `PR for Orbitalia Moon edits on p/${p.slug}`, body: pr.url, link: pr.url });
   }
 
   async openPr(cardId: string, reviewSummary: string) {
@@ -255,7 +337,7 @@ export class Pipeline {
       `**Card:** \`${cardPath(project.slug, card.number)}\``, `## Brief\n${card.brief ?? ""}`,
       `## Acceptance criteria\n${criteria.map((c) => `- [${c.met ? "x" : " "}] ${c.text}`).join("\n")}`,
       `## Checks\n\`\`\`\n${(checks?.payload.output ?? "").slice(-3000)}\n\`\`\``, `## Reviewer\n${reviewSummary}`,
-      `---\nCost of this card so far: $${Number(cost?.usd ?? 0).toFixed(2)}. Opened by Miniasys; only Lucas merges.`,
+      `---\nCost of this card so far: $${Number(cost?.usd ?? 0).toFixed(2)}. Opened by Orbitalia Moon; only Lucas merges.`,
     ].join("\n\n");
     const pr = await this.s.github.openPullRequest(project.repoFullName, { head: card.branch!, base: project.defaultBranch, title: `${card.title} (${cardPath(project.slug, card.number)})`, body });
     await this.s.d.db.update(cards).set({ prNumber: pr.number, prUrl: pr.url, updatedAt: new Date() }).where(eq(cards.id, cardId));
@@ -274,6 +356,8 @@ export class Pipeline {
         const pr = await this.s.github.pullState(project.repoFullName, card.prNumber);
         if (pr.merged) {
           await moveCard(this.s.d, card.id, "done", "system", { note: "merged by Lucas" });
+          // the project folder follows GitHub's base branch
+          await this.s.repos.syncFromGitHub({ slug: project.slug, repo: project.repoFullName, baseBranch: project.defaultBranch }).catch((e) => this.s.log.warn({ err: (e as Error).message, project: project.slug }, "folder sync after merge failed"));
           await cardEvent(this.s.d, card.id, "system", "pr", { merged: true, url: pr.url });
           const [last] = await this.s.d.db.select({ summary: runs.summary }).from(runs).where(and(eq(runs.cardId, card.id), eq(runs.kind, "agent"), eq(runs.status, "succeeded"))).orderBy(runs.createdAt);
           await addNote(this.s, { projectId: project.id, sourceType: "card_summary", sourceId: card.id, content: `${card.title}\n\n${card.brief ?? ""}\n\n${last?.summary ?? ""}` });

@@ -9,5 +9,9 @@ dist/
 *:Zone.Identifier
 /data/
 /workspaces/
+/projects/
+/storage/
+/deps/
 /lakehouse/
 coverage/
+featorfix.txt

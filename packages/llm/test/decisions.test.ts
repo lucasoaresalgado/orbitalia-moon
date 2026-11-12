@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { Decider, type DecisionEngine } from "../src/decisions.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Decider, OllamaDecisionEngine, type DecisionEngine } from "../src/decisions.ts";
 import { closedSchema, dropNulls } from "../src/schema.ts";
 
 const engine = (name: string, answer: unknown, confidence: number): DecisionEngine => ({
@@ -32,6 +32,26 @@ describe("decider", () => {
   it("returns the default when every engine fails; route_card has none (the manager decides)", async () => {
     expect(await new Decider(broken, broken).decide("triage", {})).toMatchObject({ engine: "default", output: { priority: "medium", needs_approval: true } });
     expect((await new Decider(null, null).decide("route_card", {})).output).toBeNull();
+  });
+});
+
+describe("local decisions on Ollama", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("asks for the decision schema and reads the answer", async () => {
+    const fetch = vi.fn(async () => Response.json({ message: { content: JSON.stringify({ decision: { risk: "low" }, confidence: 0.9 }) } }));
+    vi.stubGlobal("fetch", fetch);
+    const d = await new Decider(broken, new OllamaDecisionEngine("http://ollama", "small:1b")).decide("risk_class", { files: ["a.ts"] });
+    expect(d).toMatchObject({ engine: "ollama:small:1b", accepted: true, output: { risk: "low" } });
+    const body = JSON.parse((fetch.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(body).toMatchObject({ model: "small:1b", stream: false, think: false });
+    expect(body.format.properties).toHaveProperty("confidence");
+  });
+
+  it("is skipped when its answer doesn't match the schema", async () => {
+    vi.stubGlobal("fetch", async () => Response.json({ message: { content: JSON.stringify({ decision: { risk: "maybe" }, confidence: 0.9 }) } }));
+    const d = await new Decider(new OllamaDecisionEngine("http://ollama", "m"), engine("haiku_fallback", { risk: "medium" }, 0.9)).decide("risk_class", {});
+    expect(d.engine).toBe("haiku_fallback");
   });
 });
 
