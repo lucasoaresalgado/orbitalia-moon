@@ -81,7 +81,7 @@ export class Budgets {
 
   /** The price row effective now for a model; local providers and the subscription are free per call. */
   async priceFor(provider: string, model: string): Promise<{ id: number | null; price: Price }> {
-    if (provider !== "anthropic") return { id: null, price: FREE };
+    if (provider !== "anthropic" && provider !== "azure") return { id: null, price: FREE };
     if (!this.prices || Date.now() - this.prices.at > 60_000) {
       const rows = await this.d.sql<PriceRow[]>`
         SELECT id, provider, model, input_per_mtok::float8 AS "inputPerMtok", output_per_mtok::float8 AS "outputPerMtok",
@@ -90,7 +90,8 @@ export class Budgets {
       this.prices = { at: Date.now(), rows };
     }
     const today = new Date().toISOString().slice(0, 10);
-    const row = this.prices.rows.find((r) => r.provider === provider && r.model === model && r.effectiveFrom <= today);
+    const key = provider === "azure" && model.startsWith("azure:") ? model.slice("azure:".length) : model;
+    const row = this.prices.rows.find((r) => r.provider === provider && r.model === key && r.effectiveFrom <= today);
     // an unpriced model is refused rather than counted as free
     if (!row) throw new Error(`no price configured for ${provider}/${model} (Settings → Prices)`);
     return { id: row.id, price: row };

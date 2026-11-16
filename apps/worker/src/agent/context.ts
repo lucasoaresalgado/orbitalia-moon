@@ -4,18 +4,22 @@
 import { cardPath, SYSTEM_UNTRUSTED_RULE } from "@miniasys/core";
 import { cards, managerMessages, plans, projects, and, desc, eq, isNull } from "@miniasys/db";
 import type { Message, PromptBlock } from "@miniasys/llm";
-import { listSkills } from "../knowledge.ts";
+import { allowedSkills, listSkills } from "../knowledge.ts";
 import type { Services } from "../services.ts";
 
 type Card = typeof cards.$inferSelect;
 type Project = typeof projects.$inferSelect;
 
-export async function systemBlocks(s: Services, o: { prompt: string; tools: string[]; role: string; project: Project | null; card: Card | null; limbic?: string }): Promise<PromptBlock[]> {
+export async function systemBlocks(s: Services, o: { prompt: string; tools: string[]; role: string; project: Project | null; card: Card | null; limbic?: string; skills?: readonly string[] }): Promise<PromptBlock[]> {
   const blocks: PromptBlock[] = [];
   let fixed = `${o.prompt.trim()}\n\n${SYSTEM_UNTRUSTED_RULE}`;
   if (o.tools.includes("load_skill")) {
-    const skills = await listSkills(s.config.skillsDir);
-    if (skills.length) fixed += `\n\n# Skills\nLoad one with load_skill before a task it covers:\n${skills.map((k) => `- ${k.name}: ${k.description}`).join("\n")}`;
+    const allowed = await allowedSkills(s, o.skills ?? []);
+    const skills = await listSkills(s.config.skillsDir, new Set(allowed.keys()));
+    const attached = new Set(o.skills ?? []);
+    if (skills.length)
+      fixed += `\n\n# Skills\nLoad the ones a task needs with load_skill before starting it (several at once with names=[…]); a skill's other files load with file="…":\n${skills
+        .map((k) => `- ${k.name}${attached.has(k.name) ? " (yours)" : ""}${allowed.get(k.name)?.imported ? ` [from ${allowed.get(k.name)!.imported}]` : ""}: ${k.description}`).join("\n")}`;
   }
   blocks.push({ text: fixed, tier: "static" });
   // the agent's start instructions and memories: they change rarely, so they cache with the project tier
@@ -81,12 +85,15 @@ export function cardTask(project: Project, card: Card, feedback?: string | null,
   return { role: "user", content: [{ type: "text", text }] };
 }
 
-/** The manager's conversation: the recent chat of this project (or "All"), as text. */
-export async function managerHistory(s: Services, projectId: string | null, limit = 30): Promise<Message[]> {
+/**
+ * A chat's conversation: the recent messages of this project (or "All") with this
+ * agent (null: Luna, the manager), as text.
+ */
+export async function managerHistory(s: Services, projectId: string | null, agentId: string | null = null, limit = 30): Promise<Message[]> {
   const rows = await s.d.db
     .select()
     .from(managerMessages)
-    .where(projectId ? eq(managerMessages.projectId, projectId) : isNull(managerMessages.projectId))
+    .where(and(projectId ? eq(managerMessages.projectId, projectId) : isNull(managerMessages.projectId), agentId ? eq(managerMessages.agentId, agentId) : isNull(managerMessages.agentId)))
     .orderBy(desc(managerMessages.id))
     .limit(limit);
   const out: Message[] = [];

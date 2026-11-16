@@ -74,6 +74,9 @@ importers:
       '@fontsource-variable/oswald':
         specifier: 5.3.0
         version: 5.3.0
+      '@fontsource-variable/outfit':
+        specifier: 5.2.6
+        version: 5.2.6
       '@lucide/svelte':
         specifier: ^1.72.0
         version: 1.72.0(svelte@5.57.3)
@@ -947,6 +950,9 @@ packages:
 
   '@fontsource-variable/oswald@5.3.0':
     resolution: {integrity: sha512-sSZzcTeaQGNyZbTVlS4tNNHElK38UktFLqKd6NQDLFCBV27320rQC3kXSZVytYm1PPjKmPxqVaGwqj7LEKUWQw==}
+
+  '@fontsource-variable/outfit@5.2.6':
+    resolution: {integrity: sha512-0wNlmsinE4taUgmRySxld13//NtnGwN58mBegexyhYuFqiQG/4Ho+5CCkiFxXijnojmCiaBaKkYt72LDwZHiKg==}
 
   '@grpc/grpc-js@1.14.7':
     resolution: {integrity: sha512-W4W/fcBMGRVtG6dW2c7cw2mnpS3hvbBd+oQXjh2iYFTZDk1JJmcNqkM5KSaPubQpamlUUurrlb7G1s9NJeERmQ==}
@@ -3223,6 +3229,8 @@ snapshots:
   '@fontsource-variable/jetbrains-mono@5.3.0': {}
 
   '@fontsource-variable/oswald@5.3.0': {}
+
+  '@fontsource-variable/outfit@5.2.6': {}
 
   '@grpc/grpc-js@1.14.7':
     dependencies:

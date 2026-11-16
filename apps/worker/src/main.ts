@@ -9,15 +9,17 @@ import { PgBoss } from "pg-boss";
 import pino from "pino";
 import Anthropic from "@anthropic-ai/sdk";
 import { Envelope, loadConfig, parseMasterKey, PG_CHANNEL, type BusEvent } from "@miniasys/core";
-import { cards, connect, managerMessages, projects, runs, eq, and, or, lte, ne, getSetting, setSetting, SETTINGS, DEFAULT_MODELS, DEFAULT_SANDBOX, type ModelSettings, type SandboxSettings } from "@miniasys/db";
+import { cards, connect, managerMessages, projects, runs, eq, and, or, lte, ne, getSetting, setSetting, SETTINGS, DEFAULT_MODELS, DEFAULT_SANDBOX, DEFAULT_AZURE, AZURE_API_KEY_SECRET, secrets, type ModelSettings, type SandboxSettings, type AzureSettings } from "@miniasys/db";
 import { runMigrations } from "@miniasys/db/migrate";
 import { seed } from "@miniasys/db/seed";
-import { ClaudeDecisionEngine, ColibriEngine, Decider, OllamaDecisionEngine, OllamaEmbeddings } from "@miniasys/llm";
+import { AzureDecisionEngine, ClaudeDecisionEngine, ColibriEngine, Decider, OllamaDecisionEngine, OllamaEmbeddings } from "@miniasys/llm";
 import { SandboxRunner } from "@miniasys/sandbox";
 import { defaultRegistry } from "@miniasys/tools";
 import { systemBlocks } from "./agent/context.ts";
 import { Meetings } from "./meetings.ts";
 import { ScriptRunner } from "./scripts.ts";
+import { PlaygroundRunner } from "./playground.ts";
+import { SkillFetcher } from "./skills.ts";
 import { Budgets } from "./budgets.ts";
 import { Executor } from "./executor.ts";
 import { GitHub } from "./github.ts";
@@ -25,7 +27,7 @@ import { ProjectRepos } from "@miniasys/projects";
 import { Journal } from "./journal.ts";
 import { embedNote } from "./knowledge.ts";
 import { singleCall } from "./engine.ts";
-import { Models } from "./models.ts";
+import { Models, type AzureConfig } from "./models.ts";
 import { Notifier } from "./notifier.ts";
 import { Pipeline } from "./pipeline.ts";
 import { QUEUES, type Services } from "./services.ts";
@@ -48,20 +50,30 @@ const boss = new PgBoss({ connectionString: config.databaseUrl, schema: "pgboss"
 boss.on("error", (e) => log.error({ err: e.message }, "pg-boss"));
 await boss.start();
 
-const models = new Models(config.anthropic);
+const envelope = new Envelope(parseMasterKey(config.masterKey ?? undefined));
+const azureSetting = await getSetting<AzureSettings>(d.db, SETTINGS.azure, DEFAULT_AZURE);
+const azureSecretRow = await d.db.select().from(secrets).where(eq(secrets.name, AZURE_API_KEY_SECRET)).limit(1);
+const azureKey = azureSecretRow[0] && envelope.ready ? envelope.open(azureSecretRow[0].ciphertext) : null;
+const azure: AzureConfig = {
+  endpoint: azureSetting.endpoint || config.azure.endpoint,
+  apiKey: azureKey ?? config.azure.apiKey,
+  deployment: azureSetting.deployment || config.azure.deployment,
+  ...(azureSetting.apiVersion ? { apiVersion: azureSetting.apiVersion } : {}),
+};
+const models = new Models(config.anthropic, azure);
 const anthropic = config.anthropic.apiKey ? new Anthropic({ apiKey: config.anthropic.apiKey, ...(config.anthropic.baseURL ? { baseURL: config.anthropic.baseURL } : {}) }) : null;
 const modelSettings = await getSetting<ModelSettings>(d.db, SETTINGS.models, DEFAULT_MODELS);
 const sandboxSettings = await getSetting<SandboxSettings>(d.db, SETTINGS.sandbox, DEFAULT_SANDBOX);
+const azureDecisionEngine = azure.apiKey ? new AzureDecisionEngine({ endpoint: azure.endpoint, apiKey: azure.apiKey, deployment: azure.deployment, ...(azure.apiVersion ? { apiVersion: azure.apiVersion } : {}) }, azure.deployment) : null;
 const decider = new Decider(
   modelSettings.colibri_decision_model ? new ColibriEngine(config.colibriUrl, modelSettings.colibri_decision_model) : null,
+  azureDecisionEngine,
   modelSettings.local_decision_model ? new OllamaDecisionEngine(config.ollamaUrl, modelSettings.local_decision_model) : null,
   anthropic ? new ClaudeDecisionEngine(anthropic, modelSettings.decisions_fallback) : null,
 );
 const publicUrl = process.env.PUBLIC_URL ?? "http://127.0.0.1:3000";
 const notifier = new Notifier(d, config.ntfy, publicUrl, log);
 const github = config.github?.privateKey && config.github.installationId ? new GitHub({ appId: config.github.appId, privateKey: config.github.privateKey, installationId: config.github.installationId }) : null;
-const envelope = new Envelope(parseMasterKey(config.masterKey ?? undefined));
-
 const repos = new ProjectRepos(config.projectsDir, github ? () => github.gitToken() : null);
 const s: Services = {
   config, d, log, boss, models, decider, notifier, github, envelope, repos,
@@ -80,6 +92,8 @@ const ws = new Workspaces(config.workspacesDir, github ? () => github.gitToken()
 const pipeline = new Pipeline(s, ws);
 const meetingRunner = new Meetings(s);
 const scriptRunner = new ScriptRunner(s);
+const playgroundRunner = new PlaygroundRunner(s);
+const skillFetcher = new SkillFetcher(s);
 const executor = new Executor(s, ws, (run, status) => pipeline.onRunFinished(run, status));
 
 // ------------------------------------------------------------------ queues
@@ -106,7 +120,7 @@ await queue<{ planId: string }>(QUEUES.planApproved, (j) => pipeline.planApprove
 await queue<{ cardId: string }>(QUEUES.cardBrief, (j) => pipeline.brief(j.cardId));
 await queue<{ cardId: string }>(QUEUES.cardRoute, (j) => pipeline.route(j.cardId));
 await queue<{ cardId: string; runId: string }>(QUEUES.cardChecks, (j) => pipeline.checks(j.cardId, j.runId));
-await queue<{ cardId: string; checks: string }>(QUEUES.cardReview, (j) => pipeline.review(j.cardId, j.checks));
+await queue<{ cardId: string; checks: string; testReport?: string }>(QUEUES.cardReview, (j) => pipeline.review(j.cardId, j.checks, j.testReport));
 await queue<{ cardId: string; review: string }>(QUEUES.cardPr, (j) => pipeline.openPr(j.cardId, j.review));
 await queue<{ noteId: string }>(QUEUES.notesEmbed, (j) => embedNote(s, j.noteId), { retryLimit: 10 });
 await queue(QUEUES.prsPoll, () => pipeline.pollPrs(), { retryLimit: 0 });
@@ -119,6 +133,10 @@ await queue<{ projectId: string; sync?: boolean }>(QUEUES.projectEnsure, (j) => 
 await queue<{ projectId: string }>(QUEUES.projectPublish, (j) => pipeline.publishEdits(j.projectId), { retryLimit: 2 });
 // scripts (scope §26): runs, scheduled runs, and keeping pg-boss's schedules in line with the scripts table
 await queue<{ runId: string }>(QUEUES.scriptRun, (j) => scriptRunner.run(j.runId), { retryLimit: 0 });
+// the project playground: commands Lucas runs against a copy of a project's code
+await queue<{ runId: string }>(QUEUES.playgroundRun, (j) => playgroundRunner.run(j.runId), { retryLimit: 0 });
+// skills from GitHub: fetched and checked for review (installing happens in the web app, from the staging copy)
+await queue<{ importId: string }>(QUEUES.skillsFetch, (j) => skillFetcher.fetch(j.importId), { retryLimit: 0 });
 await queue<{ scriptId: string }>(QUEUES.scriptScheduled, (j) => scriptRunner.scheduled(j.scriptId), { retryLimit: 0 });
 await queue<{ scriptId?: string; projectId?: string }>(QUEUES.scriptSchedule, (j) => syncSchedules(j), { retryLimit: 2 });
 await queue<{ meetingId: string; opened?: number }>(QUEUES.meetingStep, (j) => meetingRunner.step(j.meetingId, j.opened), { retryLimit: 2 });
@@ -139,6 +157,8 @@ async function dailyReport() {
   const [luna] = await d.sql<{ id: string; model: string; system_prompt: string }[]>`
     SELECT a.id, v.model, v.system_prompt FROM agents a JOIN agent_versions v ON v.id = a.active_version_id WHERE a.slug = 'luna'`;
   if (!luna) return;
+  // harness mode: the harness plays Luna, so the platform writes no report of its own
+  if ((await getSetting<{ mode: string }>(d.db, SETTINGS.agentMode, { mode: "multi" })).mode === "single") return;
   const system = await systemBlocks(s, { prompt: luna.system_prompt, tools: [], role: "manager", project: null, card: null });
   const [run] = await d.db.insert(runs).values({ kind: "report", status: "running", model: luna.model, startedAt: new Date() }).returning();
   const { text } = await singleCall(s, {
@@ -160,6 +180,7 @@ async function sweep() {
   const weekAgo = new Date(Date.now() - 7 * 86_400_000);
   const old = await d.db.select({ id: cards.id }).from(cards).where(or(and(eq(cards.status, "done"), lte(cards.updatedAt, weekAgo)), lte(cards.deletedAt, weekAgo)));
   for (const c of old) await ws.remove(c.id);
+  await skillFetcher.sweep();
 }
 
 async function backup() {
@@ -191,6 +212,7 @@ await d.sql.listen(PG_CHANNEL, (payload) => {
     if (ev.type === "cancel") {
       executor.cancel((ev.data as { id: string }).id);
       scriptRunner.cancel((ev.data as { id: string }).id);
+      playgroundRunner.cancel((ev.data as { id: string }).id);
     }
     if (ev.type === "pause") for (const id of executor.active) executor.cancel(id);
   } catch {
@@ -203,7 +225,7 @@ const n = await executor.recover();
 // every live project has its code folder (scope §26): created, or cloned from GitHub, in the background
 for (const p of await d.db.select({ id: projects.id }).from(projects).where(ne(projects.status, "deleted"))) await boss.send(QUEUES.projectEnsure, { projectId: p.id }, { singletonKey: p.id });
 await syncSchedules();
-log.info({ resumed: n, sandbox: sandboxHealth.ok, github: !!github, anthropic: models.configured }, "worker ready");
+log.info({ resumed: n, sandbox: sandboxHealth.ok, github: !!github, anthropic: models.configured, azure: models.azureConfigured }, "worker ready");
 
 const shutdown = async () => {
   log.info("stopping");

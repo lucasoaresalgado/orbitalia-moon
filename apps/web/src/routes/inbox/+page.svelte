@@ -52,7 +52,7 @@
 <svelte:window onkeydown={key} />
 <svelte:head><title>Inbox · Orbitalia Moon</title></svelte:head>
 
-<div class="mx-auto max-w-4xl p-6">
+<div class="mx-auto max-w-4xl p-3 sm:p-6">
   <div class="mb-3 flex border-b border-line" role="tablist">
     <button role="tab" aria-selected={tab === "approvals"} class="tab {tab === 'approvals' ? 'tab-active' : ''}" onclick={() => ((tab = "approvals"), (sel = 0))}>Approvals {data.approvals.length ? `(${data.approvals.length})` : ""}</button>
     <button role="tab" aria-selected={tab === "questions"} class="tab {tab === 'questions' ? 'tab-active' : ''}" onclick={() => ((tab = "questions"), (sel = 0))}>Questions {data.questions.length ? `(${data.questions.length})` : ""}</button>

@@ -4,7 +4,7 @@ import { z } from "zod";
 
 // ------------------------------------------------------------------ agents
 
-export const ROLES = ["manager", "brief_writer", "worker", "reviewer", "security", "minutes"] as const;
+export const ROLES = ["manager", "brief_writer", "worker", "tester", "reviewer", "security", "minutes"] as const;
 export const Role = z.enum(ROLES);
 export type Role = z.infer<typeof Role>;
 

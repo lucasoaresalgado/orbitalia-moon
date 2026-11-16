@@ -16,6 +16,7 @@
   let managerOpen = $state(false);
   let paletteOpen = $state(false);
   let helpOpen = $state(false);
+  let menuOpen = $state(false);
 
   $effect(() => {
     try {
@@ -32,10 +33,10 @@
 {#if !data.authed || page.url.pathname === "/login"}
   {@render children()}
 {:else}
-  <div class="flex h-screen overflow-hidden">
-    <Sidebar {data} />
+  <div class="flex h-dvh overflow-hidden">
+    <Sidebar {data} bind:mobileOpen={menuOpen} />
     <div class="flex min-w-0 flex-1 flex-col">
-      <TopBar paused={data.paused} onsearch={() => (paletteOpen = true)} ontogglemanager={() => (managerOpen = !managerOpen)} />
+      <TopBar paused={data.paused} onsearch={() => (paletteOpen = true)} ontogglemanager={() => (managerOpen = !managerOpen)} onmenu={() => (menuOpen = true)} />
       <main class="min-h-0 flex-1 overflow-y-auto">{@render children()}</main>
     </div>
     {#if managerOpen && page.url.pathname !== "/manager"}

@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { AgentVersionInput, loadConfig } from "@miniasys/core";
-import { connect, and, eq, isNull, DEFAULT_ENGINES, DEFAULT_MODELS, DEFAULT_SANDBOX, SETTINGS, type Db } from "./index.ts";
+import { connect, and, eq, isNull, joinDefaultOrbit, DEFAULT_ENGINES, DEFAULT_MODELS, DEFAULT_SANDBOX, SETTINGS, type Db } from "./index.ts";
 import { agents, agentVersions, budgetDefaults, modelPrices, settings } from "./schema.ts";
 
 const prompt = (name: string) => readFileSync(fileURLToPath(new URL(`../../../prompts/${name}.md`, import.meta.url)), "utf8");
@@ -31,6 +31,13 @@ export const DEFAULT_AGENTS = [
       tools: [...FILES, "run_in_sandbox", "git_commit", "load_skill", "search_notes", ...BOARD, ...MEMORY].map((name) => ({ name, requires_approval: false })),
       permissions: { network: "ask", github_push: true },
       limits: { max_turns: 30, max_tokens: 8000, compact_at_tokens: 60_000, run_budget_usd: 2 } },
+  },
+  {
+    slug: "tester", name: "Tester", role: "tester", description: "Tests everything after the checks pass: runs the suite, verifies each acceptance criterion, tries to break the change and writes the missing tests.",
+    version: { model: DEFAULT_MODELS.worker_strong, fallback_model: DEFAULT_MODELS.worker_default, system_prompt: prompt("tester"),
+      tools: [...FILES, "run_in_sandbox", "git_commit", "load_skill", "search_notes", "add_card_log", "comment", ...MEMORY].map((name) => ({ name, requires_approval: false })),
+      permissions: { network: "never", github_push: true },
+      limits: { max_turns: 30, max_tokens: 8000, compact_at_tokens: 60_000, run_budget_usd: 1.5 } },
   },
   {
     slug: "reviewer", name: "Reviewer", role: "reviewer", description: "Reviews diffs and check results with a fresh context.",
@@ -61,6 +68,7 @@ const BUDGETS = [
 ];
 
 export async function seed(db: Db): Promise<void> {
+  const created: string[] = [];
   for (const a of DEFAULT_AGENTS) {
     const [existing] = await db.select().from(agents).where(eq(agents.slug, a.slug));
     if (existing) continue;
@@ -72,8 +80,11 @@ export async function seed(db: Db): Promise<void> {
         tools: v.tools, skills: v.skills, permissions: v.permissions, limits: v.limits, changeNote: v.change_note,
       }).returning();
       await tx.update(agents).set({ activeVersionId: ver!.id }).where(eq(agents.id, agent!.id));
+      created.push(agent!.id);
     });
   }
+  // new default agents join the default orbit (scope §27)
+  for (const id of created) await joinDefaultOrbit(db, id);
   if (!(await db.select().from(modelPrices).limit(1)).length)
     await db.insert(modelPrices).values(PRICES.map((p) => ({ ...p, effectiveFrom: "2026-01-01" })));
   await db.insert(budgetDefaults).values(BUDGETS).onConflictDoNothing();

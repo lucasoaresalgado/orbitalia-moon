@@ -57,6 +57,34 @@
       "when": 1794502492467,
       "tag": "0007_scripts_variables",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794827588422,
+      "tag": "0008_chat_agents",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794831307941,
+      "tag": "0009_agent_delete",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794834983409,
+      "tag": "0010_skill_imports",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794837420640,
+      "tag": "0011_orbits",
+      "breakpoints": true
     }
   ]
 }

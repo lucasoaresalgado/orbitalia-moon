@@ -25,7 +25,7 @@
 </script>
 
 <svelte:head><title>Meetings · Orbitalia Moon</title></svelte:head>
-<div class="max-w-5xl space-y-6 p-6">
+<div class="max-w-5xl space-y-6 p-3 sm:p-6">
   <section>
     <h2 class="mb-2 text-[14px] font-semibold">Meetings {#if data.project}<span class="mono text-[12px] font-normal text-muted">p/{data.project} · <a class="text-accent" href="/meetings">all</a></span>{/if}</h2>
     <div class="panel">
@@ -42,7 +42,7 @@
   <section id="start">
     <h2 class="mb-2 text-[14px] font-semibold">Start a meeting <span class="text-[12px] font-normal text-muted">round 1: updates; then those asked answer; minutes and action items (as cards) at the end</span></h2>
     <form class="panel space-y-3 p-3" onsubmit={(e) => { e.preventDefault(); void start(); }}>
-      <div class="grid grid-cols-3 gap-3">
+      <div class="grid gap-3 sm:grid-cols-3">
         <div><label class="label" for="mp">Project</label><select id="mp" class="input" bind:value={f.project}>{#each data.projects as p}<option value={p.slug}>{p.name}</option>{/each}</select></div>
         <div><label class="label" for="mr">Max rounds</label><input id="mr" class="input" type="number" min="1" max="6" bind:value={f.max_rounds} /></div>
         <div><label class="label" for="rm">Minutes per round (external agents)</label><input id="rm" class="input" type="number" min="1" max="1440" bind:value={f.round_minutes} /></div>

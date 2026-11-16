@@ -66,7 +66,23 @@ export const SETTINGS = {
   budgetUnit: "budget_unit",
   sandbox: "sandbox",
   schedules: "schedules",
+  /** the Azure Foundry connection: endpoint, deployment, api version (the key is a secret) */
+  azure: "azure",
+  /** multi-agent (brief writer, router, workers, reviewer) or a single agent doing everything */
+  agentMode: "agent_mode",
 } as const;
+
+/**
+ * multi: the pipeline as designed (brief writer → routing → a worker → reviewer).
+ * single: one agent does every card end to end: no brief writer, no routing, and it
+ * reviews its own work (the deterministic checks still run first).
+ */
+export interface AgentModeSettings {
+  mode: "multi" | "single";
+  /** the agent doing everything in single mode */
+  agent: string;
+}
+export const DEFAULT_AGENT_MODE: AgentModeSettings = { mode: "multi", agent: "dev" };
 
 export interface ModelSettings {
   manager: string;
@@ -103,6 +119,15 @@ export interface SandboxSettings {
 
 export const DEFAULT_SANDBOX: SandboxSettings = { cpus: 1, memMb: 1024, maxConcurrent: 2, timeoutS: 300, networkAllowlist: [] };
 
+export interface AzureSettings {
+  /** the Azure OpenAI / Foundry endpoint, e.g. https://ai.azure.com */
+  endpoint: string;
+  /** the Foundry deployment serving the model, e.g. gpt-5.1 (the model id is azure:<deployment>) */
+  deployment: string;
+  apiVersion?: string;
+}
+export const DEFAULT_AZURE: AzureSettings = { endpoint: "https://ai.azure.com", deployment: "", apiVersion: "2025-04-01-preview" };
+
 export * from "./cards.ts";
 export * from "./journal.ts";
 export * from "./meetings.ts";
@@ -119,3 +144,7 @@ export const DEFAULT_ENGINES: EngineSettings = { manager: "api", worker: "api", 
 
 /** The secret holding the token from `claude setup-token` (encrypted with the master key). */
 export const CLAUDE_TOKEN_SECRET = "CLAUDE_CODE_OAUTH_TOKEN";
+
+/** The secret holding the Azure Foundry API key (encrypted with the master key). */
+export const AZURE_API_KEY_SECRET = "AZURE_OPENAI_API_KEY";
+export * from "./orbits.ts";

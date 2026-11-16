@@ -19,6 +19,8 @@ export async function draftOf(agentId: string) {
 
 export async function saveDraft(agentId: string, input: unknown) {
   const v = AgentVersionInput.parse(input);
+  // attached skills come with the tool that loads them
+  if (v.skills.length && !v.tools.some((t) => t.name === "load_skill")) v.tools.push({ name: "load_skill", requires_approval: false });
   const known = new Set(defaultRegistry().all().map((t) => t.name));
   const unknown = v.tools.filter((t) => !known.has(t.name));
   if (unknown.length) error(400, `unknown tools: ${unknown.map((t) => t.name).join(", ")}`);

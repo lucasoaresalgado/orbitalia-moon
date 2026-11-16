@@ -5,7 +5,7 @@
 </script>
 
 <svelte:head><title>Audit log · Orbitalia Moon</title></svelte:head>
-<div class="mx-auto max-w-5xl p-6">
+<div class="mx-auto max-w-5xl p-3 sm:p-6">
   <form class="mb-3 flex gap-2">
     <select name="actor" class="input w-40" value={data.actor}><option value="">All actors</option><option value="user">user</option><option value="agent:">agents</option><option value="system">system</option></select>
     <input name="action" class="input w-56" placeholder="Action contains…" value={data.action} />

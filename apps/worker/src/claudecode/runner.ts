@@ -8,7 +8,7 @@
 //   access to reach Anthropic; the token is visible to processes in it.
 // - Usage is counted in tokens; the run holds up to what the budget has left and
 //   is stopped when it has used that.
-import { mkdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { usageTokens, type CallScope, type Usage } from "@miniasys/core";
 import { llmCalls, runs, secrets, eq, sql, CLAUDE_TOKEN_SECRET } from "@miniasys/db";
@@ -30,6 +30,8 @@ export interface ClaudeCodeOptions {
   /** Claude Code keeps its sessions here (one folder per card or run), so a run can resume */
   homeKey: string;
   tools: "default" | "none";
+  /** skills Claude Code finds natively in ~/.claude/skills: copied in for this run, the others removed */
+  skills?: readonly string[];
   maxTurns: number;
   resume?: string | null;
   jsonSchema?: object | null;
@@ -76,6 +78,12 @@ export async function runClaudeCode(s: Services, o: ClaudeCodeOptions): Promise<
   await mkdir(meta, { recursive: true });
   await writeFile(join(meta, "prompt.md"), o.prompt);
   await writeFile(join(meta, "system.md"), o.systemAppend);
+  const skillsHome = join(home, ".claude", "skills");
+  await rm(skillsHome, { recursive: true, force: true });
+  for (const name of o.skills ?? []) {
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) continue;
+    await cp(join(s.config.skillsDir, name), join(skillsHome, name), { recursive: true, verbatimSymlinks: false, filter: (src) => !src.split("/").includes(".git") }).catch(() => {});
+  }
   let workspace = o.workspace;
   if (!workspace) {
     workspace = join(s.config.workspacesDir, ".scratch", o.runId);

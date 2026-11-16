@@ -32,6 +32,8 @@ export const projects = pgTable("projects", {
   nextCardNumber: integer("next_card_number").notNull().default(1),
   /** S3-compatible storage for its scripts (scope §26), besides its storage folder: endpoint, bucket, prefix, region, and the secret variables holding the keys */
   storage: jsonb("storage"),
+  /** the orbit of agents working on it (scope §27); null = the default orbit */
+  orbitId: uuid("orbit_id"), // FK to orbits (ON DELETE SET NULL) is in migration 0011: orbits is declared below
   createdAt: now("created_at"),
 });
 
@@ -61,7 +63,30 @@ export const agents = pgTable("agents", {
   runtime: text("runtime").notNull().default("internal"),
   activeVersionId: uuid("active_version_id"),
   createdAt: now("created_at"),
+  /** deleted by Lucas: hidden everywhere and never run; its runs and history stay (the slug gets a "~deleted" suffix so it can be reused) */
+  deletedAt: ts("deleted_at"),
 });
+
+/**
+ * Orbits (scope §27): named sets of agents. Each project has one; an orbit serves
+ * any number of projects, and an agent can be in several orbits. The project's
+ * orbit decides who routes, briefs, works, tests, reviews and chats there.
+ */
+export const orbits = pgTable("orbits", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  slug: text("slug").notNull().unique(),
+  name: text("name").notNull(),
+  description: text("description"),
+  /** the orbit of projects without one; new agents join it */
+  isDefault: boolean("is_default").notNull().default(false),
+  createdAt: now("created_at"),
+}, (t) => [uniqueIndex("orbits_one_default").on(t.isDefault).where(sql`${t.isDefault}`)]);
+
+export const orbitAgents = pgTable("orbit_agents", {
+  orbitId: uuid("orbit_id").notNull().references(() => orbits.id, { onDelete: "cascade" }),
+  agentId: uuid("agent_id").notNull().references(() => agents.id),
+  addedAt: now("added_at"),
+}, (t) => [uniqueIndex().on(t.orbitId, t.agentId)]);
 
 /**
  * The Limbic: an agent's start instructions (written by Lucas) and its memories
@@ -311,17 +336,21 @@ export const meetingMessages = pgTable("meeting_messages", {
   createdAt: now("created_at"),
 }, (t) => [index().on(t.meetingId, t.id)]);
 
-/** The manager chat: one thread per project (null = "All"). */
+/**
+ * The chats: one thread per project (null = "All") and per agent. agent_id null is
+ * Luna, the manager; any other internal agent can be talked to directly.
+ */
 export const managerMessages = pgTable("manager_messages", {
   id: bigserial("id", { mode: "number" }).primaryKey(),
   projectId: uuid("project_id").references(() => projects.id),
+  agentId: uuid("agent_id").references(() => agents.id),
   role: text("role").notNull(), // user | assistant
   content: jsonb("content").notNull(), // provider-neutral blocks
   runId: uuid("run_id").references(() => runs.id),
   costUsd: money("cost_usd"),
   model: text("model"),
   createdAt: now("created_at"),
-}, (t) => [index().on(t.projectId, t.id)]);
+}, (t) => [index().on(t.projectId, t.id), index().on(t.agentId, t.projectId, t.id)]);
 
 // ------------------------------------------------------------------ journal and docs
 
@@ -477,6 +506,39 @@ export const scripts = pgTable("scripts", {
   createdAt: now("created_at"),
   updatedAt: now("updated_at"),
 }, (t) => [uniqueIndex().on(t.projectId, t.path)]);
+
+/**
+ * Skills imported from GitHub (scope §27): where each installed skill came from,
+ * pinned to a commit. A skill folder with no row here is one of Lucas's own (local).
+ */
+export const skillSources = pgTable("skill_sources", {
+  name: text("name").primaryKey(),
+  repo: text("repo").notNull(), // owner/repo
+  path: text("path").notNull(), // the skill's folder inside the repo ("" = the root)
+  ref: text("ref"), // what was asked for (branch/tag), null = the default branch
+  sha: text("sha").notNull(),
+  url: text("url").notNull(),
+  description: text("description"),
+  files: jsonb("files").notNull().default(sql`'[]'::jsonb`),
+  installedBy: text("installed_by").notNull(),
+  installedAt: now("installed_at"),
+});
+
+/** A GitHub fetch waiting for review: the worker clones and checks it into a staging folder; installing copies from there. */
+export const skillImports = pgTable("skill_imports", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  url: text("url").notNull(),
+  repo: text("repo").notNull(),
+  path: text("path").notNull().default(""),
+  ref: text("ref"),
+  sha: text("sha"),
+  status: text("status").notNull().default("fetching"), // fetching | ready | failed | installed | discarded
+  error: text("error"),
+  /** each skill found: name, path, description, SKILL.md, files (with flags), warnings */
+  found: jsonb("found").notNull().default(sql`'[]'::jsonb`),
+  createdBy: text("created_by").notNull(),
+  createdAt: now("created_at"),
+});
 
 export const settings = pgTable("settings", {
   key: text("key").primaryKey(),

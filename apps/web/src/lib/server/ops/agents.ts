@@ -3,11 +3,13 @@ import { readdir, stat } from "node:fs/promises";
 import { z } from "zod";
 import { AgentVersionInput, ROLES } from "@miniasys/core";
 import { cortexFile, readIndex } from "@miniasys/cortex";
-import { agents, agentVersions, limbic, runs, desc, eq, getSetting, setSetting, sql as dsql, SETTINGS, DEFAULT_MODELS, type ModelSettings } from "@miniasys/db";
+import { joinDefaultOrbit, orbits, orbitAgents, agents, agentVersions, apiTokens, limbic, runs, and, desc, eq, inArray, isNull, getSetting, setSetting, sql as dsql, SETTINGS, DEFAULT_MODELS, DEFAULT_AGENT_MODE, type ModelSettings, type AgentModeSettings } from "@miniasys/db";
 import { db, server, sql } from "../db.ts";
 import { sendJob, wakeWorker } from "../jobs.ts";
 import { deploy as deployDraft, draftOf, saveDraft, toolCatalog } from "../agents.ts";
-import { audit, defineOp, OpError } from "./define.ts";
+import { modelChoices } from "../models.ts";
+import { audit, defineOp, OpError, type Ctx } from "./define.ts";
+import { list as skillsList } from "./skills.ts";
 import { agentRow, AgentRef } from "./common.ts";
 
 /** Versions, deploys and test runs are for agents Orbitalia Moon runs. */
@@ -27,7 +29,7 @@ export const list = defineOp({
         EXISTS (SELECT 1 FROM agent_versions d WHERE d.agent_id = a.id AND d.status = 'draft') AS draft,
         (SELECT count(*)::int FROM runs r JOIN agent_versions av ON av.id = r.agent_version_id WHERE av.agent_id = a.id AND r.created_at > now() - interval '7 days') AS runs,
         COALESCE((SELECT sum(l.cost_usd) FROM llm_calls l JOIN agent_versions av ON av.id = l.agent_version_id WHERE av.agent_id = a.id AND l.created_at > now() - interval '7 days'), 0) AS cost
-      FROM agents a LEFT JOIN agent_versions v ON v.id = a.active_version_id ORDER BY a.role, a.slug`,
+      FROM agents a LEFT JOIN agent_versions v ON v.id = a.active_version_id WHERE a.deleted_at IS NULL ORDER BY a.role, a.slug`,
 });
 
 export const get = defineOp({
@@ -39,7 +41,7 @@ export const get = defineOp({
     const agent = await agentRow(i.agent);
     const [deployed] = agent.activeVersionId ? await db().select().from(agentVersions).where(eq(agentVersions.id, agent.activeVersionId)) : [];
     const draft = await draftOf(agent.id);
-    const skills = await readdir(server().config.skillsDir).catch(() => [] as string[]);
+    const skills = await skillsList.run(_c, {});
     const models = await getSetting<ModelSettings>(db(), SETTINGS.models, DEFAULT_MODELS);
     const [lim] = await db().select().from(limbic).where(eq(limbic.agentId, agent.id));
     const file = cortexFile(server().config.cortexDir, agent.slug);
@@ -67,7 +69,44 @@ export const get = defineOp({
       activity: await sql()<{ action: string; target_type: string | null; target_id: string | null; details: unknown; created_at: Date }[]>`
         SELECT action, target_type, target_id, details, created_at FROM audit_log WHERE actor = ${`agent:${agent.slug}`} ORDER BY id DESC LIMIT 50`,
       skills,
-      modelChoices: [...new Set(["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", ...Object.values(models).filter((m): m is string => typeof m === "string" && m.startsWith("claude-"))])],
+      modelChoices: await modelChoices(models),
+    };
+  },
+});
+
+export const overview = defineOp({
+  name: "agents.overview",
+  summary: "An agent at a glance: runs, success rate, tokens, cost and time over 30 days, its latest runs, the latest tool calls and errors (its logs), and the cards it holds.",
+  access: "read",
+  input: z.object({ agent: AgentRef }),
+  run: async (_c, i) => {
+    const agent = await agentRow(i.agent);
+    const [stats] = await sql()<{ runs: number; ok: number; failed: number; active: number; tokens: string; cost: string; avg_s: string | null; last_at: Date | null }[]>`
+      SELECT count(*)::int AS runs, count(*) FILTER (WHERE r.status = 'succeeded')::int AS ok, count(*) FILTER (WHERE r.status IN ('failed', 'timed_out'))::int AS failed,
+        count(*) FILTER (WHERE r.status IN ('queued', 'running', 'waiting_approval', 'waiting_input'))::int AS active,
+        COALESCE(sum(r.tokens), 0) AS tokens, COALESCE(sum(r.cost_usd), 0) AS cost,
+        avg(EXTRACT(epoch FROM (r.finished_at - r.started_at))) FILTER (WHERE r.finished_at IS NOT NULL AND r.started_at IS NOT NULL) AS avg_s, max(r.created_at) AS last_at
+      FROM runs r JOIN agent_versions v ON v.id = r.agent_version_id WHERE v.agent_id = ${agent.id} AND r.created_at > now() - interval '30 days'`;
+    const daily = await sql()<{ day: string; runs: number; tokens: string }[]>`
+      SELECT to_char(date_trunc('day', r.created_at AT TIME ZONE ${server().config.timeZone}), 'YYYY-MM-DD') AS day, count(*)::int AS runs, COALESCE(sum(r.tokens), 0) AS tokens
+      FROM runs r JOIN agent_versions v ON v.id = r.agent_version_id WHERE v.agent_id = ${agent.id} AND r.created_at > now() - interval '14 days' GROUP BY 1 ORDER BY 1`;
+    const recent = await sql()<{ id: string; kind: string; status: string; card: string | null; title: string | null; model: string | null; version: number; tokens: number; cost_usd: string; error: string | null; summary: string | null; created_at: Date; started_at: Date | null; finished_at: Date | null }[]>`
+      SELECT r.id, r.kind, r.status, CASE WHEN c.id IS NULL THEN NULL ELSE p.slug || '#' || c.number END AS card, c.title, r.model, v.version, r.tokens, r.cost_usd, r.error, r.summary, r.created_at, r.started_at, r.finished_at
+      FROM runs r JOIN agent_versions v ON v.id = r.agent_version_id LEFT JOIN cards c ON c.id = r.card_id LEFT JOIN projects p ON p.id = c.project_id
+      WHERE v.agent_id = ${agent.id} ORDER BY r.created_at DESC LIMIT 25`;
+    const logs = await sql()<{ run_id: string; seq: number; type: string; data: Record<string, unknown>; at: Date }[]>`
+      SELECT e.run_id, e.seq, e.type, e.data, e.at FROM run_events e
+      WHERE e.run_id IN (SELECT r.id FROM runs r JOIN agent_versions v ON v.id = r.agent_version_id WHERE v.agent_id = ${agent.id} ORDER BY r.created_at DESC LIMIT 10)
+        AND e.type IN ('tool_start', 'tool_end', 'error', 'status', 'text', 'compaction', 'log', 'approval')
+      ORDER BY e.at DESC, e.seq DESC LIMIT 120`;
+    // what it did through the API/MCP/CLI (a harness acting as it), from the audit log
+    const actions = await sql()<{ id: number; action: string; target_type: string | null; target_id: string | null; details: unknown; created_at: Date }[]>`
+      SELECT id, action, target_type, target_id, details, created_at FROM audit_log WHERE actor = ${`agent:${agent.slug}`} ORDER BY id DESC LIMIT 60`;
+    return {
+      actions,
+      stats: { ...stats!, tokens: Number(stats?.tokens ?? 0), cost: Number(stats?.cost ?? 0), avgS: stats?.avg_s == null ? null : Number(stats.avg_s) },
+      daily, recent,
+      logs: logs.map((l) => ({ ...l, data: Object.fromEntries(Object.entries(l.data).map(([k, v]) => [k, typeof v === "string" ? v.slice(0, 600) : v])) })),
     };
   },
 });
@@ -92,11 +131,18 @@ export const create = defineOp({
     description: z.string().max(2000).nullable().optional(),
     model: z.string().min(1).default("claude-haiku-5-5"),
     system_prompt: z.string().min(1).default("You are a helpful agent."),
+    orbits: z.array(z.string().max(64)).max(20).default([]).describe("orbits to add it to, besides the default one"),
   }),
   run: async (ctx, i) => {
     const v = AgentVersionInput.parse({ model: i.model, system_prompt: i.system_prompt, tools: [] });
     const [a] = await db().insert(agents).values({ slug: i.slug, name: i.name || i.slug, role: i.role, runtime: i.runtime, description: i.description || null }).onConflictDoNothing().returning();
     if (!a) throw new OpError(409, `a/${i.slug} already exists`);
+    // new agents join the default orbit, and any orbits asked for (scope §27)
+    await joinDefaultOrbit(db(), a.id);
+    for (const o of i.orbits) {
+      const [row] = await db().select({ id: orbits.id }).from(orbits).where(eq(orbits.slug, o));
+      if (row) await db().insert(orbitAgents).values({ orbitId: row.id, agentId: a.id }).onConflictDoNothing();
+    }
     if (i.runtime === "external") {
       await audit(ctx, "agent.create", { type: "agent", id: a.slug }, { runtime: "external" });
       return a;
@@ -204,5 +250,107 @@ export const test = defineOp({
     await audit(ctx, "agent.test", { type: "agent", id: a.slug }, { runId: run!.id });
     await wakeWorker("queued", { id: run!.id });
     return { runId: run!.id };
+  },
+});
+
+/** Agents the platform can't run without: Luna plans and chats; the single-mode agent does every card. */
+async function protectedReason(slug: string): Promise<string | null> {
+  if (slug === "luna") return "Luna is the manager: the platform needs her to plan and chat";
+  const mode = await getSetting<AgentModeSettings>(db(), SETTINGS.agentMode, DEFAULT_AGENT_MODE);
+  if (mode.mode === "single" && mode.agent === slug) return `a/${slug} is the single agent: switch the agent mode first`;
+  return null;
+}
+
+export const remove = defineOp({
+  name: "agents.delete",
+  summary: "Delete an agent: it leaves every list, its active runs stop, its open cards go back to Ready unassigned and its tokens are revoked. Its runs and history stay. Luna and the single-mode agent can't be deleted.",
+  access: "admin",
+  destructive: true,
+  input: z.object({ agent: AgentRef }),
+  run: async (ctx, i) => {
+    const agent = await agentRow(i.agent);
+    const why = await protectedReason(agent.slug);
+    if (why) throw new OpError(409, why);
+    const versions = (await db().select({ id: agentVersions.id }).from(agentVersions).where(eq(agentVersions.agentId, agent.id))).map((v) => v.id);
+    const active = versions.length ? await db().select({ id: runs.id }).from(runs).where(and(inArray(runs.agentVersionId, versions), inArray(runs.status, ["queued", "running", "waiting_approval", "waiting_input"]))) : [];
+    for (const r of active) {
+      await db().update(runs).set({ cancelRequested: true }).where(eq(runs.id, r.id));
+      await sql()`UPDATE runs SET status = 'canceled', finished_at = now(), error = 'agent deleted' WHERE id = ${r.id} AND status IN ('queued', 'waiting_approval', 'waiting_input')`;
+      await wakeWorker("cancel", { id: r.id });
+    }
+    // its open cards wait, unassigned, for routing or a new assignee
+    const freed = await sql()<{ id: string }[]>`UPDATE cards SET assignee_agent_id = NULL, updated_at = now() WHERE assignee_agent_id = ${agent.id} AND status <> 'done' AND deleted_at IS NULL RETURNING id`;
+    await db().update(apiTokens).set({ revokedAt: new Date() }).where(and(eq(apiTokens.agentId, agent.id), isNull(apiTokens.revokedAt)));
+    // the slug is freed for a new agent; history keeps showing who it was
+    const gone = `${agent.slug}~deleted-${Date.now().toString(36)}`;
+    await db().update(agents).set({ deletedAt: new Date(), slug: gone }).where(eq(agents.id, agent.id));
+    await audit(ctx, "agent.delete", { type: "agent", id: agent.slug }, { renamed: gone, canceledRuns: active.length, unassignedCards: freed.length });
+    return { ok: true, canceledRuns: active.length, unassignedCards: freed.length };
+  },
+});
+
+export const setModel = defineOp({
+  name: "agents.set_model",
+  summary: "Change an agent's model (and optionally its fallback) right away: a new version, copied from the deployed one with the new model, is deployed. A pending draft keeps its other edits and gets the new model too.",
+  access: "write",
+  input: z.object({ agent: AgentRef, model: z.string().trim().min(1).max(120), fallback_model: z.string().trim().max(120).nullable().optional() }),
+  run: async (ctx, i) => {
+    const agent = internal(await agentRow(i.agent));
+    const draft = await draftOf(agent.id);
+    const [deployed] = agent.activeVersionId ? await db().select().from(agentVersions).where(eq(agentVersions.id, agent.activeVersionId)) : [];
+    const base = deployed ?? draft;
+    if (!base) throw new OpError(409, `a/${agent.slug} has no version yet`);
+    const fallback = i.fallback_model === undefined ? base.fallbackModel : i.fallback_model || null;
+    const input = (v: typeof base) => ({ model: i.model, fallback_model: fallback, system_prompt: v.systemPrompt, tools: v.tools, skills: v.skills, permissions: v.permissions, limits: v.limits });
+    const from = deployed?.model ?? draft?.model;
+    // deploy the deployed version with the new model; a draft in progress is kept on top of it
+    const pending = draft && deployed ? input(draft) : null;
+    await saveDraft(agent.id, input(base));
+    const v = await deployDraft(agent.id, `model: ${from} → ${i.model}`);
+    if (pending) await saveDraft(agent.id, pending);
+    await audit(ctx, "agent.model", { type: "agent", id: agent.slug }, { from, to: i.model, fallback });
+    return { version: v.version, model: i.model, fallback_model: fallback };
+  },
+});
+
+/** A new deployed version of the agent with skills added and removed (a draft in progress gets the same change). */
+export async function attachSkills(ctx: Ctx, slug: string, add: string[], drop: string[]) {
+  const agent = internal(await agentRow(slug));
+  const draft = await draftOf(agent.id);
+  const [deployed] = agent.activeVersionId ? await db().select().from(agentVersions).where(eq(agentVersions.id, agent.activeVersionId)) : [];
+  const base = deployed ?? draft;
+  if (!base) throw new OpError(409, `a/${agent.slug} has no version yet`);
+  const change = (cur: unknown) => [...new Set([...((cur as string[]) ?? []).filter((s) => !drop.includes(s)), ...add])];
+  const input = (v: typeof base) => ({ model: v.model, fallback_model: v.fallbackModel, system_prompt: v.systemPrompt, tools: v.tools, skills: change(v.skills), permissions: v.permissions, limits: v.limits });
+  const before = (base.skills as string[]) ?? [];
+  const after = change(base.skills);
+  if (before.length === after.length && before.every((s) => after.includes(s))) return { version: deployed?.version ?? null, skills: after, unchanged: true };
+  const pending = draft && deployed ? input(draft) : null;
+  await saveDraft(agent.id, input(base));
+  const v = await deployDraft(agent.id, `skills: ${[...add.map((s) => `+${s}`), ...drop.map((s) => `-${s}`)].join(" ")}`);
+  if (pending) await saveDraft(agent.id, pending);
+  await audit(ctx, "agent.skills", { type: "agent", id: agent.slug }, { add, drop });
+  return { version: v.version, skills: after, unchanged: false };
+}
+
+export const skills = defineOp({
+  name: "agents.skills",
+  summary: "Set the skills an agent carries (several at once): skills is the full list, or use add / remove. A new version is deployed right away, with load_skill enabled.",
+  access: "write",
+  input: z.object({ agent: AgentRef, skills: z.array(z.string().max(64)).max(50).optional(), add: z.array(z.string().max(64)).max(50).default([]), remove: z.array(z.string().max(64)).max(50).default([]) }),
+  run: async (ctx, i) => {
+    const agent = internal(await agentRow(i.agent));
+    const known = new Set((await skillsList.run(ctx, {})).map((s) => s.name));
+    const unknown = [...(i.skills ?? []), ...i.add].filter((s) => !known.has(s));
+    if (unknown.length) throw new OpError(400, `no skill named ${unknown.join(", ")}`);
+    let add = i.add;
+    let drop = i.remove;
+    if (i.skills) {
+      const [cur] = agent.activeVersionId ? await db().select({ skills: agentVersions.skills }).from(agentVersions).where(eq(agentVersions.id, agent.activeVersionId)) : [];
+      const now = (cur?.skills as string[]) ?? [];
+      add = i.skills.filter((s) => !now.includes(s));
+      drop = now.filter((s) => !i.skills!.includes(s));
+    }
+    return attachSkills(ctx, agent.slug, add, drop);
   },
 });

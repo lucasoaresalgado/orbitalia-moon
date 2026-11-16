@@ -216,3 +216,55 @@ export const log = defineOp({
     return { ok: true };
   },
 });
+
+export const archive = defineOp({
+  name: "cards.archive",
+  summary: "Every card ever made, finished ones included: search by text or #number, filter by project, status (done, open, or deleted to see the trash) and agent; newest first, paged.",
+  access: "read",
+  input: z.object({
+    project: ProjectRef.nullable().optional(),
+    status: z.enum(["all", "open", "done", "deleted"]).default("all"),
+    q: z.string().max(200).optional(),
+    agent: z.string().max(64).optional(),
+    offset: z.number().int().min(0).default(0),
+    limit: z.number().int().min(1).max(200).default(50),
+  }),
+  run: async (_c, i) => {
+    const pid = i.project ? (await projectBySlug(i.project)).id : null;
+    const q = i.q?.trim() || null;
+    const num = q && /^#?\d+$/.test(q) ? Number(q.replace("#", "")) : null;
+    const rows = await sql()<{ id: string; project_id: string; slug: string; project: string; number: number; title: string; kind: string; status: string; priority: string; agent: string | null; pr_url: string | null; pr_number: number | null; created_at: Date; updated_at: Date; deleted_at: Date | null; cost: string; tokens: string; total: number }[]>`
+      SELECT c.id, p.id AS project_id, p.slug, p.name AS project, c.number, c.title, c.kind, c.status, c.priority, a.slug AS agent, c.pr_url, c.pr_number, c.created_at, c.updated_at, c.deleted_at,
+        COALESCE((SELECT sum(cost_usd) FROM llm_calls l WHERE l.card_id = c.id), 0) AS cost,
+        COALESCE((SELECT sum(input_tokens + output_tokens + cache_read_input_tokens + cache_creation_input_tokens) FROM llm_calls l WHERE l.card_id = c.id), 0) AS tokens,
+        count(*) OVER ()::int AS total
+      FROM cards c JOIN projects p ON p.id = c.project_id LEFT JOIN agents a ON a.id = c.assignee_agent_id
+      WHERE p.status <> 'deleted' AND (${pid}::uuid IS NULL OR c.project_id = ${pid})
+        AND CASE ${i.status}::text WHEN 'deleted' THEN c.deleted_at IS NOT NULL WHEN 'done' THEN c.deleted_at IS NULL AND c.status = 'done'
+          WHEN 'open' THEN c.deleted_at IS NULL AND c.status <> 'done' ELSE c.deleted_at IS NULL END
+        AND (${i.agent ?? null}::text IS NULL OR a.slug = ${i.agent ?? null})
+        AND (${q}::text IS NULL OR c.number = ${num} OR c.title ILIKE '%' || ${q} || '%' OR c.brief ILIKE '%' || ${q} || '%')
+      ORDER BY c.updated_at DESC OFFSET ${i.offset} LIMIT ${i.limit}`;
+    const [counts] = await sql()<{ open: number; done: number; deleted: number }[]>`
+      SELECT count(*) FILTER (WHERE c.deleted_at IS NULL AND c.status <> 'done')::int AS open, count(*) FILTER (WHERE c.deleted_at IS NULL AND c.status = 'done')::int AS done,
+        count(*) FILTER (WHERE c.deleted_at IS NOT NULL)::int AS deleted
+      FROM cards c JOIN projects p ON p.id = c.project_id WHERE p.status <> 'deleted' AND (${pid}::uuid IS NULL OR c.project_id = ${pid})`;
+    return { cards: rows.map(({ total: _t, ...r }) => r), total: rows[0]?.total ?? 0, counts: counts ?? { open: 0, done: 0, deleted: 0 } };
+  },
+});
+
+export const restore = defineOp({
+  name: "cards.restore",
+  summary: "Bring a deleted card back (from the trash in the card archive), in the status it had.",
+  access: "write",
+  input: z.object({ project: ProjectRef, number: z.number().int().min(1) }),
+  run: async (ctx, i) => {
+    const project = await projectBySlug(i.project);
+    const [card] = await db().update(cards).set({ deletedAt: null, updatedAt: new Date() })
+      .where(and(eq(cards.projectId, project.id), eq(cards.number, i.number))).returning();
+    if (!card) throw new OpError(404, `no card p/${project.slug}#${i.number}`);
+    await cardEvent(database(), card.id, ctx.actor, "status_change", { from: "deleted", to: card.status });
+    await audit(ctx, "card.restore", { type: "card", id: card.id }, { title: card.title, number: card.number });
+    return { ok: true, status: card.status };
+  },
+});

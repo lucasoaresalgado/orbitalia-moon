@@ -57,7 +57,8 @@ export interface ToolContext {
     commit(message: string): Promise<{ sha: string | null; files: number }>;
   } | null;
   skills: {
-    load(name: string): Promise<string | null>;
+    /** a skill the agent may use (its SKILL.md), or one of its other files; null when it may not or it doesn't exist */
+    load(name: string, file?: string): Promise<string | null>;
   } | null;
   notes: {
     search(query: string, limit: number): Promise<{ source: string; content: string; score: number }[]>;

@@ -4,7 +4,7 @@
 // schemas, stop reasons, usage) to itself.
 import { emptyUsage, type Usage } from "@miniasys/core";
 
-export type Provider = "anthropic" | "colibri" | "mock";
+export type Provider = "anthropic" | "azure" | "colibri" | "mock";
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
 /** Opaque reasoning, replayed unchanged to the model that produced it and dropped elsewhere. */

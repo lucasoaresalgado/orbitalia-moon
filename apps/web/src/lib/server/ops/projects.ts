@@ -1,7 +1,8 @@
 // Projects: the list, one project with its settings, the board, its activity and plans.
 import { z } from "zod";
 import { ProjectCreate } from "@miniasys/core";
-import { budgets, projects, and, eq } from "@miniasys/db";
+import { budgets, projects, and, eq, defaultOrbitId, projectOrbit } from "@miniasys/db";
+import { orbitBySlug } from "./orbits.ts";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { db, server, sql } from "../db.ts";
@@ -32,7 +33,8 @@ export const get = defineOp({
   run: async (_c, i) => {
     const project = await projectBySlug(i.project);
     const [b] = await db().select().from(budgets).where(and(eq(budgets.scope, "project"), eq(budgets.scopeId, project.id)));
-    return { project, budget: b ? { limit: b.limitUsd, spent: b.spentUsd } : null };
+    const { orbit } = await projectOrbit(db(), project.id);
+    return { project, budget: b ? { limit: b.limitUsd, spent: b.spentUsd } : null, orbit: { slug: orbit.slug, name: orbit.name, isDefault: orbit.isDefault } };
   },
 });
 
@@ -41,12 +43,14 @@ export const create = defineOp({
   summary: "Create a project (a kanban board); with a GitHub repository, code cards end as pull requests.",
   access: "write",
   input: ProjectCreate.extend({
+    orbit: z.string().min(1).max(64).optional().describe("the orbit of agents working on it; default: the default orbit"),
     default_branch: z.string().min(1).default("main"),
     checks_command: z.string().nullable().optional().describe("deterministic checks run in a sandbox before review, e.g. pnpm install && pnpm test"),
   }),
   run: async (ctx, p) => {
+    const orbitId = p.orbit ? (await orbitBySlug(p.orbit)).id : await defaultOrbitId(db());
     const [row] = await db().insert(projects).values({
-      slug: p.slug, name: p.name, description: p.description ?? null, repoFullName: p.repo_full_name ?? null,
+      orbitId, slug: p.slug, name: p.name, description: p.description ?? null, repoFullName: p.repo_full_name ?? null,
       defaultBranch: p.default_branch, checksCommand: p.checks_command || null,
     }).onConflictDoNothing().returning();
     if (!row) throw new OpError(409, `p/${p.slug} already exists`);
@@ -72,10 +76,13 @@ export const update = defineOp({
     checks_network: z.boolean().optional(),
     status: z.enum(["active", "paused", "archived"]).optional(),
     budget_usd: z.number().min(0).nullable().optional(),
+    orbit: z.string().min(1).max(64).optional().describe("the orbit of agents working on it (scope §27)"),
   }),
   run: async (ctx, i) => {
     const p = await projectBySlug(i.project);
+    const orbit = i.orbit ? await orbitBySlug(i.orbit) : null;
     const set = {
+      ...(orbit ? { orbitId: orbit.id } : {}),
       ...(i.name !== undefined ? { name: i.name } : {}),
       ...(i.description !== undefined ? { description: i.description || null } : {}),
       ...(i.repo_full_name !== undefined ? { repoFullName: i.repo_full_name || null } : {}),
@@ -109,8 +116,10 @@ export const board = defineOp({
         EXISTS (SELECT 1 FROM runs r WHERE r.card_id = c.id AND r.status = 'running') AS live
       FROM cards c LEFT JOIN agents a ON a.id = c.assignee_agent_id
       WHERE c.project_id = ${project.id} AND c.deleted_at IS NULL ORDER BY c.updated_at DESC`;
-    const agents = await sql()<{ id: string; slug: string }[]>`SELECT id, slug FROM agents WHERE role = 'worker' ORDER BY slug`;
-    return { cards, agents };
+    // the workers of the project's orbit (scope §27)
+    const { orbit, members } = await projectOrbit(db(), project.id);
+    const agents = members.filter((m) => m.agent.role === "worker").map((m) => ({ id: m.agent.id, slug: m.agent.slug }));
+    return { cards, agents, orbit: { slug: orbit.slug, name: orbit.name } };
   },
 });
 

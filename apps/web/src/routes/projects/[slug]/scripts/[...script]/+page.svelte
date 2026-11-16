@@ -122,7 +122,7 @@
 
 <svelte:head><title>{data.path} · Scripts</title></svelte:head>
 <div class="flex h-full flex-col">
-  <div class="flex items-center gap-2 border-b border-line px-3 py-1.5">
+  <div class="flex flex-wrap items-center gap-2 border-b border-line px-3 py-1.5">
     <a href="/projects/{data.project.slug}/scripts" class="text-muted hover:text-fg" aria-label="Back"><ArrowLeft size={15} /></a>
     <span class="mono">{data.path}</span><span class="text-[12px] text-muted">{data.script.language}</span>
     {#if data.script.description}<span class="truncate text-[12px] text-fg-2">{data.script.description}</span>{/if}
@@ -132,9 +132,9 @@
     <button class="btn" onclick={save} disabled={!dirty || busy}>Save</button>
   </div>
   {#if err}<p class="border-l-2 border-bad px-3 py-1 text-bad">{err}</p>{/if}
-  <div class="flex min-h-0 flex-1">
-    <div class="min-w-0 flex-1 p-2"><CodeEditor bind:value={code} path={data.path} onsave={save} height="calc(100vh - 160px)" /></div>
-    <aside class="w-[26rem] shrink-0 space-y-4 overflow-auto border-l border-line p-3">
+  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+    <div class="min-w-0 flex-1 p-2"><CodeEditor bind:value={code} path={data.path} onsave={save} height="min(calc(100dvh - 160px), 900px)" /></div>
+    <aside class="w-full shrink-0 space-y-4 border-t border-line p-3 lg:w-[26rem] lg:overflow-auto lg:border-t-0 lg:border-l">
       <section>
         <div class="label mb-1">Run</div>
         <div class="space-y-2">

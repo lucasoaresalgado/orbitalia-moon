@@ -36,7 +36,7 @@ async function services(): Promise<Services> {
   return {
     config: { ...loadConfig({ DATABASE_URL: url! }), workspacesDir: tmp, skillsDir: join(tmp, "skills") },
     d: d!, log, boss: { send: async (name: string, data: unknown) => void sent.push({ name, data }) } as unknown as Services["boss"],
-    models: new Models({ apiKey: "test" }, () => new MockClient(script)),
+    models: new Models({ apiKey: "test" }, null, () => new MockClient(script)),
     decider: new Decider(null, null), sandbox: null, notifier,
     budgets: new Budgets(d!, "America/Sao_Paulo", notifier), journal: new Journal(d!),
     registry: defaultRegistry(), github: null,

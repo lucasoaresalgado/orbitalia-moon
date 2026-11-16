@@ -18,8 +18,11 @@ import * as files from "./files.ts";
 import * as variables from "./variables.ts";
 import * as storage from "./storage.ts";
 import * as scriptsOps from "./scripts.ts";
+import * as playground from "./playground.ts";
+import * as skillsOps from "./skills.ts";
+import * as orbitsOps from "./orbits.ts";
 
-const MODULES = [projects, files, scriptsOps, storage, variables, cards, journal, docs, meetingsOps, manager, inbox, agents, runs, system, settings, tokens];
+const MODULES = [projects, orbitsOps, files, scriptsOps, playground, skillsOps, storage, variables, cards, journal, docs, meetingsOps, manager, inbox, agents, runs, system, settings, tokens];
 
 const isOp = (v: unknown): v is Op => !!v && typeof v === "object" && "name" in v && "run" in v && "input" in v;
 

@@ -6,7 +6,8 @@ import { AgentLimits } from "@miniasys/core";
 import { BudgetExceeded } from "../budgets.ts";
 import { boardApi, requestApproval } from "../agent/board.ts";
 import { cardTask, managerHistory, systemBlocks, takeNotes } from "../agent/context.ts";
-import { finish, type FinalStatus, type RunRow } from "../agent/loop.ts";
+import { allowedSkills } from "../knowledge.ts";
+import { chatAgentId, finish, type FinalStatus, type RunRow } from "../agent/loop.ts";
 import type { Services } from "../services.ts";
 import type { CardRef, Workspaces } from "../workspaces.ts";
 import { runClaudeCode, SubscriptionUnavailable } from "./runner.ts";
@@ -102,10 +103,11 @@ export async function executeClaudeCodeRun(s: Services, ws: Workspaces, run: Run
     prompt = (task.content[0] as { text: string }).text;
     systemAppend = `${version.systemPrompt}\n${WORKER_NOTES}`;
   } else if (isManager) {
-    const blocks = await systemBlocks(s, { prompt: version.systemPrompt, tools: [], role: "manager", project: project ?? null, card: null });
-    systemAppend = `${blocks.map((b) => b.text).join("\n\n")}\n${MANAGER_NOTES}`;
-    const history = await managerHistory(s, run.projectId);
-    prompt = history.map((m) => `${m.role === "user" ? "Lucas" : "Luna"}: ${m.content.map((b) => ("text" in b ? b.text : "")).join("\n")}`).join("\n\n") + "\n\nLuna:";
+    const blocks = await systemBlocks(s, { prompt: version.systemPrompt, tools: [], role: agent.role, project: project ?? null, card: null });
+    systemAppend = `${blocks.map((b) => b.text).join("\n\n")}\n${agent.role === "manager" ? MANAGER_NOTES : WORKER_NOTES}`;
+    const history = await managerHistory(s, run.projectId, chatAgentId(agent));
+    const me = agent.slug === "luna" ? "Luna" : agent.name || agent.slug;
+    prompt = history.map((m) => `${m.role === "user" ? "Lucas" : me}: ${m.content.map((b) => ("text" in b ? b.text : "")).join("\n")}`).join("\n\n") + `\n\n${me}:`;
   } else {
     prompt = String((run.input as { text?: string } | null)?.text ?? "");
     systemAppend = `${version.systemPrompt}\n${WORKER_NOTES}`;
@@ -145,7 +147,8 @@ export async function executeClaudeCodeRun(s: Services, ws: Workspaces, run: Run
     docsText = parts.length ? `# The project's docs\n\n${parts.join("\n\n")}\n${PROJECT_NOTES}` : PROJECT_NOTES;
   }
   systemAppend = [systemAppend, memory, cortexText, docsText, MEMORY_NOTES].filter(Boolean).join("\n\n");
-  if (card && !cp?.sessionId) {
+  // Lucas's notes are for the card's worker, not for the tester
+  if (card && !cp?.sessionId && run.kind !== "qa") {
     const notes = await takeNotes(s, card.id, run.id);
     if (notes.length) prompt += `\n\n## Notes from Lucas on this card\nAct on them.\n${notes.map((n) => `- ${n}`).join("\n")}`;
   }
@@ -158,7 +161,7 @@ export async function executeClaudeCodeRun(s: Services, ws: Workspaces, run: Run
     await s.journal.append(run.id, { type: "turn_start", turn: 1, model: `${model} (Claude subscription)` });
     result = await runClaudeCode(s, {
       runId: run.id, scope, agentDayLimit: limits.day_budget_usd, model, prompt, systemAppend, workspace,
-      homeKey: card?.id ?? run.id, tools: isManager ? "none" : "default", maxTurns: isManager ? 1 : limits.max_turns,
+      homeKey: card?.id ?? run.id, tools: isManager ? "none" : "default", skills: isManager ? [] : [...(await allowedSkills(s, (version.skills as string[] | null) ?? [])).keys()], maxTurns: isManager ? 1 : limits.max_turns,
       resume: cp?.sessionId ?? null, capTokens: isManager ? 400_000 : 3_000_000, timeoutS: isManager ? 600 : 1800, signal,
       onEvent: async (e) => {
         if (e.kind === "init") await save(e.sessionId);
@@ -240,8 +243,8 @@ export async function executeClaudeCodeRun(s: Services, ws: Workspaces, run: Run
         }
       }
     }
-    await s.d.db.insert(managerMessages).values({ projectId: run.projectId, role: "assistant", content: { text }, runId: run.id, costUsd: 0, model: `${model} (subscription)` });
-    await publish(s.d.sql, { topic: "manager", type: "message", data: { projectId: run.projectId } });
+    await s.d.db.insert(managerMessages).values({ projectId: run.projectId, agentId: chatAgentId(agent), role: "assistant", content: { text }, runId: run.id, costUsd: 0, model: `${model} (subscription)` });
+    await publish(s.d.sql, { topic: "manager", type: "message", data: { projectId: run.projectId, agentId: chatAgentId(agent) } });
   }
   if (card && cardRef) {
     // .git was read-only in the container: the platform commits the work on the card branch

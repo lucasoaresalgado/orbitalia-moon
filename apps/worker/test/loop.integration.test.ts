@@ -34,7 +34,7 @@ function services(): Services {
   return {
     config: { ...loadConfig({ DATABASE_URL: url! }), workspacesDir: tmp, skillsDir: join(tmp, "skills") },
     d: d!, log, boss: { send: async () => null } as unknown as Services["boss"],
-    models: new Models({ apiKey: null }, () => mock),
+    models: new Models({ apiKey: null }, null, () => mock),
     decider: new Decider(null, null), sandbox: null, notifier,
     budgets: new Budgets(d!, "America/Sao_Paulo", notifier), journal: new Journal(d!),
     registry: defaultRegistry(), github: null,
