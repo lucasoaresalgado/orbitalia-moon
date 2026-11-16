@@ -4,8 +4,8 @@
 // is retried and nothing depends on the laptop staying awake.
 import { cardPath, CHANNELS, PlanContent, ReviewOutput, type CallScope } from "@miniasys/core";
 import {
-  agents, agentVersions, approvals, cardEvent, cards, decisions, moveCard, plans, projects, runs, and, eq, inArray, getSetting, publish, setSetting, SETTINGS,
-  DEFAULT_MODELS, type ModelSettings,
+  agents, agentVersions, approvals, cardEvent, cards, decisions, moveCard, plans, projects, runs, and, eq, inArray, isNull, sql, getSetting, publish, setSetting, SETTINGS,
+  DEFAULT_MODELS, DEFAULT_AGENT_MODE, projectOrbit, pickMember, type ModelSettings, type AgentModeSettings,
 } from "@miniasys/db";
 import { z } from "zod";
 import type { FinalStatus, RunRow } from "./agent/loop.ts";
@@ -21,6 +21,9 @@ type Project = typeof projects.$inferSelect;
 
 const ACTIVE = ["queued", "running", "waiting_approval", "waiting_input"];
 const MAX_CHECK_FAILURES = 3;
+/** the tester's "fail" verdicts on one card before it waits for Lucas */
+const MAX_TEST_FAILURES = 3;
+const VERDICT = /VERDICT:\s*(pass|fail)\s*$/i;
 const HIGH_RISK_PATHS = /(^|\/)(\.github\/|auth|secret|credential|migrations?\/|Dockerfile|Containerfile|package-lock|pnpm-lock|\.env)/i;
 
 export class Pipeline {
@@ -39,6 +42,33 @@ export class Pipeline {
 
   private models() {
     return getSetting<ModelSettings>(this.s.d.db, SETTINGS.models, DEFAULT_MODELS);
+  }
+
+  /**
+   * Single-agent (harness) mode: the one agent every card goes to, usually an external
+   * agent, i.e. your harness; null in multi-agent mode. An internal one also works:
+   * it then works and reviews its own cards.
+   */
+  private async soloAgent() {
+    const mode = await getSetting<AgentModeSettings>(this.s.d.db, SETTINGS.agentMode, DEFAULT_AGENT_MODE);
+    if (mode.mode !== "single") return null;
+    const [a] = await this.s.d.db.select().from(agents).where(eq(agents.slug, mode.agent));
+    if (!a || a.deletedAt) throw new Error(`single-agent mode: no agent a/${mode.agent}`);
+    if (a.runtime === "external") return { agents: a, agent_versions: null };
+    const solo = await this.agentVersion(mode.agent);
+    if (!solo) throw new Error(`single-agent mode: a/${mode.agent} has no deployed version`);
+    return solo;
+  }
+
+  /**
+   * The project's orbit's agent for a role (scope §27), as { agents, agent_versions }.
+   * With fallback, a role the orbit lacks is filled by the platform's default agent (defaultSlug).
+   */
+  private async orbitRole(projectId: string, role: string, defaultSlug: string, o: { fallback?: boolean; prefer?: string } = {}) {
+    const { members } = await projectOrbit(this.s.d.db, projectId);
+    const m = pickMember(members, role, o.prefer ?? defaultSlug);
+    if (m) return { agents: m.agent, agent_versions: m.version };
+    return o.fallback === false ? null : this.agentVersion(defaultSlug);
   }
 
   private async agentVersion(slug: string) {
@@ -68,9 +98,13 @@ export class Pipeline {
   async brief(cardId: string) {
     const { card, project } = await this.load(cardId);
     if (card.status !== "backlog") return;
-    if (!card.brief) {
+    // single-agent mode: no brief writer; the agent reads the card itself
+    if (!card.brief && (await this.soloAgent())) {
+      const criteria = (card.acceptanceCriteria as (string | { text: string })[]).map((c) => `- ${typeof c === "string" ? c : c.text}`).join("\n");
+      await this.s.d.db.update(cards).set({ brief: [card.title, criteria && `Acceptance criteria:\n${criteria}`].filter(Boolean).join("\n\n"), updatedAt: new Date() }).where(eq(cards.id, card.id));
+    } else if (!card.brief) {
       const [plan] = card.planId ? await this.s.d.db.select().from(plans).where(eq(plans.id, card.planId)) : [];
-      const writer = await this.agentVersion("brief-writer");
+      const writer = await this.orbitRole(project.id, "brief_writer", "brief-writer");
       const model = writer?.agent_versions.model ?? (await this.models()).brief_writer;
       const content = plan ? PlanContent.parse(plan.content) : null;
       const planCard = content?.milestones.flatMap((m) => m.cards).find((c) => c.key === card.planKey);
@@ -113,6 +147,16 @@ export class Pipeline {
       await cardEvent(this.s.d, cardId, "system", "log", { text: `ready for external agent a/${ext.slug}; its harness picks it up` });
       return;
     }
+    // single-agent mode: every card goes to the one agent, on its own model
+    const solo = await this.soloAgent();
+    if (solo) {
+      await this.s.d.db.update(cards).set({ assigneeAgentId: solo.agents.id, modelTier: null }).where(eq(cards.id, cardId));
+      // a harness picks the card up itself; an internal agent starts now
+      const harness = solo.agents.runtime === "external";
+      await cardEvent(this.s.d, cardId, "system", "log", { message: `single-agent mode: assigned to a/${solo.agents.slug}${harness ? "; waiting for the harness to pick it up" : ""}` });
+      if (!harness) await this.startWork(cardId);
+      return;
+    }
     const input = { title: card.title, kind: card.kind, brief: card.brief, criteria: card.acceptanceCriteria, project: project.slug };
     const triage = await this.decide("triage", input, { cardId });
     if (triage.output) await this.s.d.db.update(cards).set({ priority: triage.output.priority }).where(eq(cards.id, cardId));
@@ -121,8 +165,12 @@ export class Pipeline {
     // no confident routing: the safe choice is the general developer on the stronger model
     const role = route.output?.role ?? "dev";
     const tier = route.output?.model_tier ?? "sonnet";
-    const agent = (await this.agentVersion(role)) ?? (await this.agentVersion("dev"));
-    if (!agent) throw new Error("no worker agent is deployed");
+    // a worker of the project's orbit: the routed one if it's in the orbit, else the orbit's first
+    const agent = await this.orbitRole(project.id, "worker", "dev", { prefer: role, fallback: false });
+    if (!agent) {
+      const { orbit } = await projectOrbit(this.s.d.db, project.id);
+      throw new Error(`p/${project.slug}'s orbit "${orbit.name}" has no deployed worker: add one to it`);
+    }
     await this.s.d.db.update(cards).set({ assigneeAgentId: agent.agents.id, modelTier: tier }).where(eq(cards.id, cardId));
     await this.startWork(cardId, { model: tier === "haiku" ? models.worker_default : models.worker_strong });
   }
@@ -135,7 +183,7 @@ export class Pipeline {
     const [agent] = card.assigneeAgentId ? await this.s.d.db.select().from(agents).where(eq(agents.id, card.assigneeAgentId)) : [];
     // an external agent's harness works the card (and reads its notes) itself
     if (agent?.runtime === "external") return;
-    const a = agent ?? (await this.agentVersion("dev"))?.agents;
+    const a = agent ?? (await this.orbitRole(card.projectId, "worker", "dev"))?.agents;
     if (!a?.activeVersionId) throw new Error("the card's agent has no deployed version");
     const models = await this.models();
     const model = o.model ?? (card.modelTier === "haiku" ? models.worker_default : card.modelTier === "sonnet" ? models.worker_strong : undefined);
@@ -150,6 +198,7 @@ export class Pipeline {
   // ---------------------------------------------------------------- after a worker run
 
   async onRunFinished(run: RunRow, status: FinalStatus) {
+    if (run.kind === "qa" && run.cardId) return this.afterTesting(run, status);
     if (run.kind !== "agent" || !run.cardId) return;
     if (status !== "succeeded") return;
     // notes Lucas left while it worked (the subscription engine can't take them mid-run): back to work first
@@ -198,6 +247,8 @@ export class Pipeline {
     }
     await cardEvent(this.s.d, cardId, "system", "checks", { passed, output: output.slice(-20_000) });
     if (passed) {
+      // a tester tests everything first (the card stays in Checks); without one, straight to review
+      if (await this.startTesting(card, output)) return;
       await moveCard(this.s.d, cardId, "in_review", "system");
       await this.s.boss.send(QUEUES.cardReview, { cardId, checks: output.slice(-8000) }, { singletonKey: cardId });
       return;
@@ -213,18 +264,76 @@ export class Pipeline {
     await this.startWork(cardId, { feedback: `The deterministic checks failed. Fix the cause, run the checks yourself, and commit.\n\n${output.slice(-8000)}` });
   }
 
-  async review(cardId: string, checks: string) {
+  // ---------------------------------------------------------------- the tester
+
+  /** The project's orbit's tester, in multi-agent mode only; an orbit without one doesn't test (scope §27). */
+  private async tester(projectId: string) {
+    if (await this.soloAgent()) return null;
+    return this.orbitRole(projectId, "tester", "tester", { fallback: false });
+  }
+
+  /** Starts the tester on a card whose checks passed; false when there is no tester. */
+  private async startTesting(card: Card, checks: string): Promise<boolean> {
+    const t = await this.tester(card.projectId);
+    if (!t) return false;
+    const [active] = await this.s.d.db.select({ id: runs.id }).from(runs).where(and(eq(runs.cardId, card.id), inArray(runs.status, ACTIVE)));
+    if (active) return true;
+    const mission = [
+      "You are testing this card, not building it. The worker says it's done and the deterministic checks passed (output below).",
+      "Test everything as your instructions say, add the missing tests, and end with the VERDICT line.",
+      `## Checks output\n${checks.slice(-6000)}`,
+    ].join("\n\n");
+    const [run] = await this.s.d.db.insert(runs).values({
+      kind: "qa", cardId: card.id, projectId: card.projectId, agentVersionId: t.agent_versions.id, status: "queued", input: { feedback: mission, checks: checks.slice(-8000) },
+    }).returning({ id: runs.id });
+    await cardEvent(this.s.d, card.id, "system", "log", { message: `testing by a/${t.agents.slug}` });
+    await publish(this.s.d.sql, { topic: "runs", type: "queued", data: { id: run!.id } });
+    return true;
+  }
+
+  /** The tester's verdict: pass → review (with its report); fail → back to the worker; it couldn't run → review anyway. */
+  private async afterTesting(run: RunRow, status: FinalStatus) {
+    if (["waiting_approval", "waiting_input", "interrupted", "canceled"].includes(status)) return;
+    const { card, project } = await this.load(run.cardId!);
+    if (card.status !== "checks") return;
+    const [row] = await this.s.d.db.select({ summary: runs.summary, error: runs.error, input: runs.input }).from(runs).where(eq(runs.id, run.id));
+    const report = (row?.summary ?? "").trim();
+    const checks = (row?.input as { checks?: string } | null)?.checks ?? "";
+    const verdict = status === "succeeded" ? (VERDICT.exec(report)?.[1]?.toLowerCase() as "pass" | "fail" | undefined) ?? "none" : "error";
+    await cardEvent(this.s.d, card.id, "agent:tester", "test", { verdict, report: report.slice(-20_000), runId: run.id, ...(row?.error ? { error: row.error } : {}) });
+    if (verdict === "fail") {
+      const [f] = await this.s.d.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM card_events WHERE card_id = ${card.id} AND type = 'test' AND payload->>'verdict' = 'fail'`;
+      if ((f?.n ?? 0) >= MAX_TEST_FAILURES) {
+        await moveCard(this.s.d, card.id, "blocked", "system", { blockedReason: "failed", note: `the tester failed it ${f!.n} times` });
+        await this.s.notifier.notify({ level: "warn", title: `${cardPath(project.slug, card.number)} keeps failing its tests`, body: report.slice(-500), link: `/cards/${project.slug}/${card.number}`, ntfy: "default" });
+        return;
+      }
+      await moveCard(this.s.d, card.id, "in_progress", "system");
+      await this.startWork(card.id, { feedback: `The tester found problems. Fix them (the tests it added are on the branch), run the tests yourself, and commit.\n\n${report.slice(-8000)}` });
+      return;
+    }
+    const note = verdict === "pass" ? report : verdict === "none" ? `${report}\n\n(The tester gave no verdict.)` : `The tester couldn't finish: ${row?.error ?? status}.`;
+    await moveCard(this.s.d, card.id, "in_review", "system");
+    await this.s.boss.send(QUEUES.cardReview, { cardId: card.id, checks: checks.slice(-8000), testReport: note.slice(-8000) }, { singletonKey: card.id });
+  }
+
+  async review(cardId: string, checks: string, testReport?: string) {
     const { card, project, ref } = await this.load(cardId);
     if (card.status !== "in_review") return;
     const diff = await this.ws.diff(ref);
     const touchedHigh = diff.files.some((f) => HIGH_RISK_PATHS.test(f));
     const risk = await this.decide("risk_class", { files: diff.files.slice(0, 100), insertions: diff.insertions, deletions: diff.deletions, sensitive_paths: touchedHigh, checks: checks.slice(-2000) }, { cardId });
     const level = touchedHigh ? "high" : (risk.output?.risk ?? "high");
-    const reviewer = await this.agentVersion("reviewer");
+    const reviewer = await this.orbitRole(project.id, "reviewer", "reviewer");
     const models = await this.models();
     const light = level === "low";
-    const scope: CallScope = { projectId: project.id, cardId, agentId: reviewer?.agents.id ?? null };
-    const [run] = await this.s.d.db.insert(runs).values({ kind: "review", cardId, projectId: project.id, agentVersionId: reviewer?.agent_versions.id ?? null, status: "running", model: reviewer?.agent_versions.model ?? models.reviewer, startedAt: new Date() }).returning();
+    // single-agent mode: the one agent reviews its own work (with the reviewer's instructions, on its own model)
+    const soloAgent = await this.soloAgent();
+    // a harness reviews nothing here: it moves its own cards
+    const solo = soloAgent?.agent_versions ? (soloAgent as NonNullable<Awaited<ReturnType<Pipeline["agentVersion"]>>>) : null;
+    const by = solo ?? reviewer;
+    const scope: CallScope = { projectId: project.id, cardId, agentId: by?.agents.id ?? null };
+    const [run] = await this.s.d.db.insert(runs).values({ kind: "review", cardId, projectId: project.id, agentVersionId: by?.agent_versions.id ?? null, status: "running", model: by?.agent_versions.model ?? models.reviewer, startedAt: new Date() }).returning();
     const criteria = (card.acceptanceCriteria as (string | { text: string })[]).map((c) => (typeof c === "string" ? c : c.text));
     try {
       const out = await singleCall(this.s, {
@@ -233,7 +342,7 @@ export class Pipeline {
         prompt: [
           `Card ${cardPath(project.slug, card.number)}: ${card.title}`, `Risk: ${level}`,
           `## Brief\n${card.brief ?? ""}`, `## Acceptance criteria\n${criteria.map((c) => `- ${c}`).join("\n")}`,
-          `## Checks (passed)\n${checks}`, `## Diff stat\n${diff.stat}`, `## Diff\n${diff.text.slice(0, light ? 30_000 : 150_000)}`,
+          `## Checks (passed)\n${checks}`, ...(testReport ? [`## Tester's report\n${testReport}`] : []), `## Diff stat\n${diff.stat}`, `## Diff\n${diff.text.slice(0, light ? 30_000 : 150_000)}`,
         ].join("\n\n"),
         effort: light ? "low" : "high", maxOutputTokens: light ? 1500 : 6000,
         format: z.toJSONSchema(ReviewOutput) as Record<string, unknown>,

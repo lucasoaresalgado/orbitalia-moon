@@ -54,4 +54,6 @@ export const QUEUES = {
   scriptRun: "script.run",
   scriptScheduled: "script.scheduled",
   scriptSchedule: "script.schedule",
+  playgroundRun: "playground.run",
+  skillsFetch: "skills.fetch",
 } as const;

@@ -148,14 +148,29 @@ export const listCards = defineTool({
   },
 });
 
+const SkillName = z.string().regex(/^[a-z0-9][a-z0-9-]*$/);
 export const loadSkill = defineTool({
   name: "load_skill",
-  description: "Load a skill (a folder of instructions) by name into your context.",
-  input: z.object({ name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/) }),
+  description: "Load skills (folders of instructions) into your context: name for one, names for several at once (up to 6). With file, read another file of one skill (a reference doc, an example) instead of its SKILL.md.",
+  input: z.object({
+    name: SkillName.optional(),
+    names: z.array(SkillName).min(1).max(6).optional(),
+    file: z.string().min(1).max(300).optional().describe("a path inside the skill's folder, e.g. reference/forms.md (needs name)"),
+  }).refine((i) => i.name || i.names?.length, "give name or names"),
   risk: "low",
   execute: async (i, ctx) => {
-    const text = await ctx.skills?.load(i.name);
-    return text ? { content: text, summary: `skill ${i.name}` } : { content: `no skill named ${i.name}`, summary: "no such skill", isError: true };
+    const wanted = [...new Set([...(i.name ? [i.name] : []), ...(i.names ?? [])])];
+    if (i.file && wanted.length !== 1) return { content: "file needs exactly one skill name", summary: "bad input", isError: true };
+    const parts: string[] = [];
+    const missing: string[] = [];
+    for (const n of wanted) {
+      const text = await ctx.skills?.load(n, i.file);
+      if (text) parts.push(text);
+      else missing.push(n);
+    }
+    if (!parts.length) return { content: `no skill you can use named ${missing.join(", ")}`, summary: "no such skill", isError: true };
+    if (missing.length) parts.push(`(not available to you: ${missing.join(", ")})`);
+    return { content: parts.join("\n\n---\n\n"), summary: i.file ? `skill ${wanted[0]}/${i.file}` : `skills ${wanted.filter((n) => !missing.includes(n)).join(", ")}` };
   },
 });
 

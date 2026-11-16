@@ -38,13 +38,15 @@ export const handle: Handle = async ({ event, resolve }) => {
     event.locals.authed = await validSession(event.cookies.get(COOKIE));
     event.locals.ctx = event.locals.authed ? UI : null;
   }
-  if (!event.locals.authed && !PUBLIC.includes(path)) {
+  // a preview link carries its own signature (lib/server/preview.ts), checked by its endpoint
+  const preview = path.startsWith("/preview/");
+  if (!event.locals.authed && !PUBLIC.includes(path) && !preview) {
     if (TOKEN_PATHS(path)) return problem(401, "log in, or send Authorization: Bearer <token>");
     redirect(303, `/login?next=${encodeURIComponent(path + event.url.search)}`);
   }
   const res = await resolve(event);
   // agent output is untrusted: no inline scripts from content, no framing, no sniffing
-  res.headers.set("X-Frame-Options", "DENY");
+  if (!preview) res.headers.set("X-Frame-Options", "DENY");
   res.headers.set("X-Content-Type-Options", "nosniff");
   res.headers.set("Referrer-Policy", "same-origin");
   return res;

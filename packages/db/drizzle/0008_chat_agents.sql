@@ -1,0 +1,3 @@
+ALTER TABLE "manager_messages" ADD COLUMN "agent_id" uuid;--> statement-breakpoint
+ALTER TABLE "manager_messages" ADD CONSTRAINT "manager_messages_agent_id_agents_id_fk" FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "manager_messages_agent_id_project_id_id_index" ON "manager_messages" USING btree ("agent_id","project_id","id");

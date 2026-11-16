@@ -13,7 +13,7 @@
 
 <div class="max-w-4xl space-y-3 p-4">
   <form class="flex gap-2" onsubmit={(e) => { e.preventDefault(); if (valid) void goto(`/projects/${data.project.slug}/docs/${slug}?edit=1`); }}>
-    <input class="input mono w-72" placeholder="new doc: overview, adr/0001-storage" bind:value={slug} aria-label="New doc slug" />
+    <input class="input mono w-full sm:w-72" placeholder="new doc: overview, adr/0001-storage" bind:value={slug} aria-label="New doc slug" />
     <button class="btn" disabled={!valid}>New doc</button>
   </form>
   <div class="panel">

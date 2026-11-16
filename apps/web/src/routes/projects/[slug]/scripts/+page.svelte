@@ -37,7 +37,7 @@
 <div class="max-w-5xl space-y-6 p-4">
   {#if data.pending}<p class="border-l-2 border-warn pl-2 text-warn">{data.pending}</p>{/if}
   <form class="flex items-center gap-2" onsubmit={(e) => { e.preventDefault(); void create(); }}>
-    <input class="input mono w-64" placeholder="new script name, e.g. daily_sync" bind:value={name} aria-label="Script name" />
+    <input class="input mono w-full sm:w-64" placeholder="new script name, e.g. daily_sync" bind:value={name} aria-label="Script name" />
     <select class="input w-36" bind:value={lang} aria-label="Language"><option value="py">Python</option><option value="ts">TypeScript</option><option value="sh">Bash</option><option value="sql">DuckDB SQL</option></select>
     <button class="btn btn-primary" disabled={!/^[a-zA-Z0-9][a-zA-Z0-9_/-]*$/.test(name)}>New script</button>
     {#if err}<span class="text-[12px] text-bad">{err}</span>{/if}
@@ -46,7 +46,7 @@
   <div class="panel">
     {#each data.scripts as s}
       <a class="row hover:bg-surface-2" href="{base}/{s.path}">
-        <span class="mono w-64 truncate">{s.path.replace(/^scripts\//, "")}</span>
+        <span class="mono w-40 truncate sm:w-64">{s.path.replace(/^scripts\//, "")}</span>
         <span class="w-24 text-[12px] text-muted">{s.language}</span>
         <span class="flex-1 truncate text-fg-2">{s.description ?? ""}</span>
         {#if s.scheduleEnabled}<span class="mono text-[12px] text-accent" title="schedule">⏱ {s.schedule}</span>{/if}

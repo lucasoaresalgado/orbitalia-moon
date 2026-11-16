@@ -19,14 +19,14 @@
 </script>
 
 <svelte:head><title>System · Orbitalia Moon</title></svelte:head>
-<div class="mx-auto max-w-5xl space-y-4 p-6">
+<div class="mx-auto max-w-5xl space-y-4 p-3 sm:p-6">
   <div class="flex items-center gap-2">
     <h2 class="text-[15px] font-semibold">System</h2>
     <button class="btn ml-auto" onclick={() => invalidateAll()}>Refresh</button>
     <button class="btn {data.paused ? 'btn-primary' : 'btn-danger'}" onclick={pause}>{data.paused ? "Resume all agents" : "Pause all agents"}</button>
   </div>
 
-  <div class="grid grid-cols-3 gap-3">
+  <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
     {#each data.health as h}
       <div class="panel p-3">
         <div class="flex items-center gap-2"><StatusBadge status={h.ok ? "ok" : "error"} compact /><span class="font-medium">{h.name}</span><span class="num ml-auto text-[11px] text-muted">{h.ms} ms</span></div>
@@ -35,7 +35,7 @@
     {/each}
   </div>
 
-  <div class="grid grid-cols-2 gap-4">
+  <div class="grid gap-4 lg:grid-cols-2">
     <div class="panel p-3">
       <div class="label">Laptop</div>
       <div class="space-y-3">
@@ -61,7 +61,7 @@
     {:else}<p class="px-3 pb-3 text-muted">No active runs.</p>{/each}
   </div>
 
-  <div class="grid grid-cols-2 gap-4">
+  <div class="grid gap-4 lg:grid-cols-2">
     <div class="panel">
       <div class="label px-3 pt-3">Sandboxes started in the last hour, still running</div>
       {#each data.sandboxes as s}<div class="row"><span class="mono">{s.container_name}</span><span class="mono flex-1 truncate text-muted">{s.command}</span><span class="text-muted">{ago(s.created_at)}</span></div>{:else}<p class="px-3 pb-3 text-muted">None.</p>{/each}

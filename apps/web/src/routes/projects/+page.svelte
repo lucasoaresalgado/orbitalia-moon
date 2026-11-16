@@ -5,7 +5,7 @@
 </script>
 
 <svelte:head><title>Projects · Orbitalia Moon</title></svelte:head>
-<div class="mx-auto max-w-5xl p-6">
+<div class="mx-auto max-w-5xl p-3 sm:p-6">
   <div class="mb-3 flex items-center"><h2 class="text-[15px] font-semibold">Projects</h2><a class="btn btn-primary ml-auto" href="/projects/new"><Plus size={14} /> New project</a></div>
   <div class="panel">
     {#each data.projects as p}

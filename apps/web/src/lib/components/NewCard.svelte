@@ -28,7 +28,7 @@
   <div class="space-y-3 p-4">
     {#if error}<p class="border-l-2 border-bad pl-2 text-bad">{error}</p>{/if}
     <div><label class="label" for="t">Title</label><input id="t" class="input" bind:value={title} /></div>
-    <div class="grid grid-cols-2 gap-3">
+    <div class="grid gap-3 sm:grid-cols-2">
       <div><label class="label" for="k">Kind</label><select id="k" class="input" bind:value={kind}><option>code</option><option>data</option><option>research</option><option>ops</option></select></div>
       <div><label class="label" for="p">Priority</label><select id="p" class="input" bind:value={priority}><option>low</option><option>medium</option><option>high</option><option>urgent</option></select></div>
     </div>

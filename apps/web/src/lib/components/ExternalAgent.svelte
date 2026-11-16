@@ -4,22 +4,27 @@
   import { ArrowLeft } from "@lucide/svelte";
   import { time } from "#lib/format.ts";
 
-  let { agent, assigned, activity }: {
+  import type { Snippet } from "svelte";
+  import AgentMoon from "./AgentMoon.svelte";
+  let { agent, assigned, activity, actions }: {
     agent: { slug: string; name: string; role: string; description: string | null };
     assigned: { ref: string; title: string; status: string; updated_at: Date | string }[];
     activity: { action: string; target_type: string | null; target_id: string | null; details: unknown; created_at: Date | string }[];
+    actions?: Snippet;
   } = $props();
   const cardHref = (ref: string) => `/cards/${ref.replace("#", "/")}`;
 </script>
 
 <div class="flex h-full flex-col">
-  <div class="flex items-center gap-3 border-b border-line bg-surface-1 px-4 py-2">
+  <div class="flex flex-wrap items-center gap-3 border-b border-line bg-surface-1 px-3 py-2 sm:px-4">
     <a href="/agents" class="text-muted hover:text-fg" aria-label="Back"><ArrowLeft size={15} /></a>
+    <AgentMoon slug={agent.slug} size={24} spin />
     <span class="mono font-medium">a/{agent.slug}</span>
     <span class="rounded border border-line px-1.5 text-[11px] text-fg-2">external</span>
-    <span class="truncate text-fg-2">{agent.description ?? ""}</span>
+    <span class="hidden truncate text-fg-2 md:inline">{agent.description ?? ""}</span>
+    {#if actions}<div class="ml-auto">{@render actions()}</div>{/if}
   </div>
-  <div class="grid flex-1 grid-cols-2 gap-6 overflow-auto p-6">
+  <div class="grid flex-1 gap-6 overflow-auto p-3 sm:p-6 lg:grid-cols-2">
     <section>
       <p class="mb-4 text-[12px] text-muted">
         A harness acts as this agent through the API, the MCP server or the CLI (a token created for it, or <span class="mono">--as {agent.slug}</span>).

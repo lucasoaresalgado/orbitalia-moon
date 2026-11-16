@@ -9,7 +9,7 @@
 <svelte:head><title>a/{data.agent.slug} · History</title></svelte:head>
 <div class="mx-auto max-w-4xl p-6">
   <div class="mb-3 flex items-center gap-2"><a href="/agents/{data.agent.slug}" class="text-muted hover:text-fg" aria-label="Back"><ArrowLeft size={15} /></a><h2 class="text-[15px] font-semibold">a/{data.agent.slug} · versions</h2></div>
-  {#if form?.restored}<p class="mb-2 border-l-2 border-ok pl-2 text-ok">v{form.restored} restored as the draft. <a class="text-accent" href="/agents/{data.agent.slug}">Open the editor</a></p>{/if}
+  {#if form?.restored}<p class="mb-2 border-l-2 border-ok pl-2 text-ok">v{form.restored} restored as the draft. <a class="text-accent" href="/agents/{data.agent.slug}/edit">Open the editor</a></p>{/if}
   <div class="panel">
     {#each data.versions as v}
       <div class="border-b border-line last:border-b-0">

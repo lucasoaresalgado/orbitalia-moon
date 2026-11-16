@@ -47,15 +47,15 @@
 
 <svelte:head><title>{m.topic} · Meeting</title></svelte:head>
 <div class="flex h-full flex-col">
-  <div class="flex items-center gap-3 border-b border-line bg-surface-1 px-4 py-2">
+  <div class="flex flex-wrap items-center gap-3 border-b border-line bg-surface-1 px-3 py-2 sm:px-4">
     <a href="/meetings" class="text-muted hover:text-fg" aria-label="Back"><ArrowLeft size={15} /></a>
     <span class="font-medium">{m.topic}</span>
     <span class="text-[12px] text-muted">{m.status} · round {m.round}/{m.maxRounds}{running && left ? ` · ${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, "0")} left` : ""}{m.closedBy ? ` · closed by ${m.closedBy}` : ""}</span>
     <span class="flex-1 truncate text-right text-[12px] text-fg-2">{data.participants.map((p) => `a/${p.slug}${p.runtime === "external" ? "ᵉˣᵗ" : ""}`).join("  ")}</span>
     {#if running}<button class="btn btn-danger" onclick={end}>End meeting</button>{/if}
   </div>
-  <div class="flex min-h-0 flex-1">
-    <nav class="w-56 shrink-0 overflow-auto border-r border-line p-2" aria-label="Rounds">
+  <div class="flex min-h-0 flex-1 flex-col md:flex-row">
+    <nav class="flex w-full shrink-0 gap-1 overflow-auto border-b border-line p-2 md:block md:w-56 md:border-r md:border-b-0" aria-label="Rounds">
       {#each rounds as r}
         {@const n = data.messages.filter((x) => x.round === r && (x.kind === "turn" || x.kind === "message")).length}
         <button class="mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left {shown === r ? 'bg-surface-3' : 'hover:bg-surface-2'}" onclick={() => (picked = r)}>

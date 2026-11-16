@@ -38,6 +38,7 @@
 24. [Open decisions](#24-open-decisions)
 25. [Harness access: API, MCP and CLI](#25-harness-access-api-mcp-and-cli)
 26. [Project code, scripts, variables and storage](#26-project-code-scripts-variables-and-storage)
+27. [Brand, UI evolution, single-agent mode and direct chats](#27-brand-ui-evolution-single-agent-mode-and-direct-chats)
 
 ---
 
@@ -1674,4 +1675,77 @@ A script is a file under `scripts/` in the code folder — `.py` (Python 3), `.t
 ### Operations
 
 `files.list/get/put/move/delete/history/show`, `scripts.list/get/save/settings/run/runs/delete`, `variables.list/set/delete`, `storage.list/get/put/delete/config`, `projects.sync`, `projects.delete` — UI tabs Code, Scripts, Storage; project Settings → Variables and Delete; Settings → Variables (global).
+
+---
+
+## 27. Brand, UI evolution, single-agent mode and direct chats
+
+*Added 2026-11-16. Where this section and §18 differ, this section wins.*
+
+### Brand
+- Identity from `orbitalia-moon.png`: a violet moon eclipsed by a cream disc; wordmark "Orbitalia" (cream) + "Moon" (violet) in Outfit. `Logo.svelte` draws it (mark / flat / line variants); the favicon and the touch icon come from it.
+- **Orbitalia** is the default theme (deep-space indigo surfaces, cream ink, violet accent). For now only Orbitalia, Dark and Light can be picked; Green edition, EVA-01, **Rogue** (was Risk of Rain 2) and **Vintage** (was Windows 98) keep their styles but are disabled. The page title is in the brand font, larger; agent status lives only in the sidebar footer.
+- **Every agent is a moon** (`lib/moons.ts`, `AgentMoon.svelte`): palette, surface (craters / bands / speckles), ring and rotation period derive from its slug, so they are stable everywhere. Luna wears the brand mark. On an agent's page and while an agent is answering, its surface turns on its own axis (no motion with `prefers-reduced-motion`).
+
+### Layout and responsiveness
+- The shell works from 360 px up: below `lg` the sidebar is a drawer opened from the top bar; the chat panel is full screen on phones; boards scroll one column at a time with a column jump bar; tables scroll inside their panel instead of the page.
+- Shared pieces: `Modal` (a window inside the page, a bottom sheet on phones), `Collapsible` sections, `InfoTip` (an (i) that explains on hover/focus/tap) and `ReadMore` (long explanations clamp to a line or two).
+
+### Settings
+- One page in four groups (AI, Spending, Access, Platform); every section folds. A rail on the left (chips on phones) follows the scroll with a bar on the current section, and a progress line runs along the top.
+- **AI providers** are cards (Anthropic API, Claude subscription, Azure Foundry, local models); **Add an AI** opens a three-step window (choose → connect → assign to roles). Prices, secrets and tokens are added in windows. `?open=<section|dialog>` deep-links (e.g. `?open=add-ai`, `?open=budgets`).
+- Models per role: a label column with an (i) per role and a model field with suggestions from the price table; it no longer overlaps at any width or zoom.
+
+### Costs in tokens
+When budgets count tokens (the subscription), Costs becomes **Usage**: the tiles (tokens today / month, tokens per merged PR, model calls), the daily chart, the by-agent / by-project bars and the top cards all show tokens; dollars only when budgets count dollars.
+
+### Card archive
+Finished cards stay: the board's Done column shows the latest 8 and links to the **Card archive** (`/cards`), which lists every card (finished, open, all) with search and paging, opens any of them in its drawer, and keeps deleted cards in a **Trash** they can be restored from (`cards.archive`, `cards.restore`). A card only leaves the board through Delete.
+
+### Project playground
+`/projects/<slug>/playground`, a test area for a project's code:
+- **Console:** `playground.run` runs a shell command in a sandbox (same profile as scripts, §10/§26) against a copy of the project's code that persists between commands (`reset` copies it again); output streams live; history with re-run. It never changes the project's code.
+- **Preview:** the project's HTML pages in a frame at desktop / tablet / phone width. Files are served read-only by `/preview/<exp>.<sig>/<slug>/<path>` (confined with `confine()`, never `.git`) with `Content-Security-Policy: sandbox …`, so agent-written pages run in an opaque origin: no session cookie, no storage, no same-origin API calls. The link carries an HMAC signature (per process key, 12 h) because the frame's subresources can't carry the strict session cookie.
+
+### Orbits: sets of agents per project
+An **orbit** is a named set of agents (`orbits`, `orbit_agents`; operations `orbits.list/get/create/update/delete`). Each project has one (`projects.orbit_id`; `projects.create`/`projects.update` take `orbit`); one orbit can serve many projects; an agent can be in many orbits. Created from **+ New Orbit** on the Agents page (a window: any name, an optional description, agents grouped by role with what a missing role means, the projects to move onto it, and a live drawing of the orbit); changed per project in its settings (the header shows the project's orbit).
+- **Default orbit**: migration 0011 creates it with every live agent and puts every existing project on it, so nothing changes until other orbits exist. New agents (created or seeded) join it; projects without an orbit use it; it can't be deleted. Deleting another orbit moves its projects to the one chosen (default: Default).
+- **What the project's orbit decides** (worker: `projectOrbit`/`pickMember`): cards are routed only to the orbit's deployed workers (the routed one if it's a member, else the first); the brief writer, tester and reviewer are the orbit's. A missing **brief writer** or **reviewer** falls back to the platform's default agent (review is never skipped); a missing **tester** means no testing; no **worker** stops routing with "the orbit has no deployed worker". The project's chat lists the orbit's agents, its manager first (Luna when the orbit has none); the board's agent filter lists its workers.
+- Changing a project's orbit applies to new work; running cards finish with their agent. Agent mode (team / single / harness) stays global for now.
+
+### Skills: from GitHub, several per agent
+A skill is a folder with a `SKILL.md` (the format of the public skill repositories). Two kinds:
+- **Local** (Lucas's own, in `SKILLS_DIR`): available to every agent with `load_skill`, as before.
+- **Imported from GitHub**: reach only the agents they are attached to. The version's `skills` list now counts at run time (before, every agent saw every skill and the list did nothing).
+
+Importing (Settings → Skills → Import from GitHub; operations `skills.import`, `skills.import_get`, `skills.install`, `skills.check_update`, `skills.remove`, `skills.list`, `skills.view`; install and remove are admin, so no agent token can add instructions for agents):
+1. Paste `github.com/owner/repo` (every skill in it) or `…/tree/<ref>/<folder>` (one), optionally a branch/tag/commit.
+2. The worker (it holds the GitHub App token) fetches one commit with `git` run directly (no shell), hardened with `-c` (hooks, fsmonitor, credential helper, ssh and the file protocol off, symlinks off) in an environment of its own (no global/system config, no prompts, no LFS). Anonymous first, then the App's token for private repositories it can see.
+3. Each folder with a `SKILL.md` is checked into a staging folder: `SKILL.md` first and never skipped; regular text files only (no symlinks, no binaries), at most 60 files, 256 KB each, 2 MB per skill. Script files are kept as text and flagged "never run". Lines that read or move secrets, touch secret files, download, push, run destructive commands, decode hidden content, override instructions or hide things from Lucas are flagged; linked domains are listed. A skill whose `SKILL.md` fails is shown but can't be installed.
+4. The preview shows every skill (description, files, flagged lines, its `SKILL.md`). Lucas picks the skills, renames them if a name is taken, acknowledges flagged lines, and can give them to agents in the same step. Installing copies the reviewed staging files (never re-fetching), pinned to the commit (`skill_sources`); staging folders expire after a day.
+5. "Check for update" fetches the newest commit of the same folder for review; installing it replaces the skill.
+
+At run time an agent's prompt lists the skills it may use (marking its own and where imported ones come from); `load_skill` loads several at once (`names`) and a skill's reference files (`file`, confined to the skill's folder). Attaching skills turns `load_skill` on. On the subscription engine, the agent's skills are copied into `~/.claude/skills` for the run, so Claude Code finds them natively. `agents.skills` sets an agent's skills (deploying a new version), from the agent editor's Skills tab or the import window.
+
+### The Tester
+A new agent type (`tester` in `ROLES`), seeded as **a/tester** (prompt `prompts/tester.md`, the strong worker model, workspace tools, sandbox, commits, no network). Its job is to test everything:
+- In team mode, once a worker's card passes the deterministic checks, the pipeline starts a `qa` run of the deployed tester on the card's workspace (the card stays in **Checks**; Lucas's notes stay for the worker). It runs the suite, verifies every acceptance criterion for real, tries to break the change (edge cases, error paths, idempotency…), writes the missing tests and commits them (`test: …`), never touching application code, and ends with `VERDICT: pass` or `VERDICT: fail`.
+- **pass** → In review; the reviewer gets the tester's report next to the checks. **fail** → back to the worker with the report as feedback; after 3 fails the card is blocked for Lucas. If the tester can't finish (or gives no verdict) the card goes to review anyway, with a note.
+- Each verdict is a `test` card event; the card drawer shows "testing" in the pipeline and the tester's last report. Its engine follows the workers' (Settings → Engines). No tester deployed, or single-agent/harness mode → straight to review, as before.
+
+### Single-agent mode: the harness does it all
+Setting `agent_mode` (`settings.agent_mode`): **multi** (the platform runs the agents: brief writer → routing → worker → reviewer, Luna plans and chats) or **single**: one agent does it all. The intended single agent is an **external agent, i.e. your harness** (Claude Code over MCP, for instance), and then Orbitalia Moon is a *view of what the harness does* (**harness mode**):
+- the platform runs no agent: no brief-writer call, no routing (every card is assigned to the harness and waits for it), no review run, no daily report;
+- chat messages to Luna or any agent create no run: they wait (`manager.pending`) for the harness to answer in that agent's name (`manager.reply`); the chat says it is waiting;
+- the harness acts as any agent: `manager.reply agent=<slug>`, the CLI's `--as <agent>`, or the `X-Miniasys-Agent` header on a token that acts as Lucas; every action shows up on the board, in the chats, in the audit log and on each agent's page (Logs → "Actions as a/<agent>").
+Settings → Agent mode creates the harness identity if needed and shows the connection steps. An internal agent can still be the single agent (it then works and self-reviews every card here). The sidebar shows the mode.
+
+### Agents
+- Agents can be deleted (`agents.delete`, from the agent's page, typing its name to confirm): soft delete (`agents.deleted_at`): it leaves every list, active runs stop, open cards go back unassigned, its tokens are revoked, and its slug gets a `~deleted-…` suffix so the name is free again while history keeps it. Luna and the single-mode agent can't be deleted.
+- An agent's model can be changed any time (`agents.set_model`, "Change model" on its page): a new version with the new model (and fallback) is deployed at once; a draft in progress keeps its other edits. The editor's model fields take any id, with suggestions (Claude, priced models incl. `azure:<deployment>`, the roles' models).
+- `/agents/<slug>` is the agent's page: hero with its turning moon, **Overview** (runs, success rate, tokens, average run, runs per day, cards held, latest runs), **Configuration** (model, limits, permissions, tools with risk, prompt and Limbic) and **Logs** (tool calls, results, errors and status changes of its last 10 runs) — `agents.overview`. **Edit** opens the editor, now at `/agents/<slug>/edit`, which links back.
+
+### Chats with any agent, and stopping an answer
+- `manager_messages.agent_id` (null = Luna) gives every internal agent its own threads per project. The Chat page and the side panel pick the agent (`manager.agents`); `manager.thread` / `manager.send` take `agent`. A direct chat runs as a `manager`-kind run of that agent's deployed version, outside any card.
+- **Stop:** while an agent answers, Send becomes Stop (or Esc): `manager.cancel` cancels the run at once and leaves a "stopped" note in the thread (empty text, so the agent's history skips it).
 

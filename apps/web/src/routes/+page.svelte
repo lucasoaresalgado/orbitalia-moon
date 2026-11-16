@@ -15,7 +15,7 @@
 
 <svelte:head><title>Orbitalia Moon</title></svelte:head>
 
-<div class="mx-auto max-w-5xl p-6">
+<div class="mx-auto max-w-5xl p-3 sm:p-6">
   <div class="mb-4 flex gap-2">
     <input class="input h-9 text-[13px]" placeholder="Search projects, agents, runs…" bind:value={q} />
     <div class="relative">

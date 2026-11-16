@@ -15,10 +15,13 @@ import type * as files from "./files.ts";
 import type * as variables from "./variables.ts";
 import type * as storage from "./storage.ts";
 import type * as scripts from "./scripts.ts";
+import type * as playground from "./playground.ts";
+import type * as skills from "./skills.ts";
+import type * as orbits from "./orbits.ts";
 
 // a module may export other things too (constants): only its operations count
 type Values<T> = Extract<T[keyof T], { name: string; run: unknown }>;
-type AllOps = Values<typeof agents> | Values<typeof cards> | Values<typeof inbox> | Values<typeof manager> | Values<typeof projects> | Values<typeof runs> | Values<typeof settings> | Values<typeof system> | Values<typeof tokens> | Values<typeof journal> | Values<typeof docs> | Values<typeof meetings> | Values<typeof files> | Values<typeof variables> | Values<typeof storage> | Values<typeof scripts>;
+type AllOps = Values<typeof agents> | Values<typeof cards> | Values<typeof inbox> | Values<typeof manager> | Values<typeof projects> | Values<typeof runs> | Values<typeof settings> | Values<typeof system> | Values<typeof tokens> | Values<typeof journal> | Values<typeof docs> | Values<typeof meetings> | Values<typeof files> | Values<typeof variables> | Values<typeof storage> | Values<typeof scripts> | Values<typeof playground> | Values<typeof skills> | Values<typeof orbits>;
 
 export type OpName = AllOps["name"];
 export type OpOutput<N extends OpName> = Awaited<ReturnType<Extract<AllOps, { name: N }>["run"]>>;

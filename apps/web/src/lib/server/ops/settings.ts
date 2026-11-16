@@ -4,8 +4,8 @@
 import { z } from "zod";
 import { Envelope, parseMasterKey } from "@miniasys/core";
 import {
-  budgetDefaults, modelPrices, secrets, desc, eq, getSetting, setSetting, SETTINGS, DEFAULT_MODELS, DEFAULT_SANDBOX, DEFAULT_ENGINES, CLAUDE_TOKEN_SECRET,
-  type ModelSettings, type SandboxSettings, type EngineSettings,
+  AZURE_API_KEY_SECRET, DEFAULT_AZURE, DEFAULT_AGENT_MODE, agents, budgetDefaults, modelPrices, secrets, desc, eq, getSetting, setSetting, SETTINGS, DEFAULT_MODELS, DEFAULT_SANDBOX, DEFAULT_ENGINES, CLAUDE_TOKEN_SECRET,
+  type AgentModeSettings, type AzureSettings, type ModelSettings, type SandboxSettings, type EngineSettings,
 } from "@miniasys/db";
 import { db, server, sql } from "../db.ts";
 import { audit, defineOp, OpError } from "./define.ts";
@@ -21,9 +21,12 @@ export const get = defineOp({
   run: async () => {
     const c = server().config;
     const schedules = await sql()<{ name: string; cron: string; timezone: string | null; updated_on: Date | null }[]>`SELECT name, cron, timezone, updated_on FROM pgboss.schedule ORDER BY name`.catch(() => []);
+    const azureSetting = await getSetting<AzureSettings>(db(), SETTINGS.azure, DEFAULT_AZURE);
+    const azureSecretRow = await db().select().from(secrets).where(eq(secrets.name, AZURE_API_KEY_SECRET)).limit(1);
     return {
       models: await getSetting<ModelSettings>(db(), SETTINGS.models, DEFAULT_MODELS),
       engines: await getSetting<EngineSettings>(db(), SETTINGS.engines, DEFAULT_ENGINES),
+      agentMode: await getSetting<AgentModeSettings>(db(), SETTINGS.agentMode, DEFAULT_AGENT_MODE),
       budgetUnit: await getSetting<"usd" | "tokens">(db(), SETTINGS.budgetUnit, "usd"),
       subscription: (await db().select({ lastUsedAt: secrets.lastUsedAt }).from(secrets).where(eq(secrets.name, CLAUDE_TOKEN_SECRET)))[0] ?? null,
       sandbox: await getSetting<SandboxSettings>(db(), SETTINGS.sandbox, DEFAULT_SANDBOX),
@@ -33,6 +36,7 @@ export const get = defineOp({
       schedules,
       providers: {
         anthropic: !!c.anthropic.apiKey,
+        azure: { endpoint: azureSetting.endpoint, deployment: azureSetting.deployment, apiVersion: azureSetting.apiVersion, apiKeyLoaded: !!c.azure.apiKey || !!azureSecretRow[0] },
         colibri: c.colibriUrl,
         ollama: c.ollamaUrl,
         embedding: c.embeddingModel,
@@ -60,6 +64,42 @@ export const models = defineOp({
     await setSetting(db(), SETTINGS.models, next);
     await audit(ctx, "settings.models", null, next);
     return next;
+  },
+});
+
+export const azure = defineOp({
+  name: "settings.azure",
+  summary: "Set the Azure Foundry connection: endpoint, deployment and api version; the API key is a secret (Settings → Secrets, name AZURE_OPENAI_API_KEY).",
+  access: "admin",
+  input: z.object({
+    endpoint: z.string().trim().min(1).default("https://ai.azure.com"),
+    deployment: z.string().trim().default(""),
+    apiVersion: z.string().trim().optional(),
+  }),
+  run: async (ctx, i) => {
+    const value: AzureSettings = { endpoint: i.endpoint, deployment: i.deployment, ...(i.apiVersion ? { apiVersion: i.apiVersion } : {}) };
+    await setSetting(db(), SETTINGS.azure, value);
+    await audit(ctx, "settings.azure", null, value);
+    return value;
+  },
+});
+
+export const agentMode = defineOp({
+  name: "settings.agent_mode",
+  summary: "Multi-agent (brief writer, routing to workers, reviewer, all run by the platform) or single-agent mode: one agent does it all. With an external agent (your harness) the platform runs no agents and becomes a view of what the harness does: cards wait for it and chat messages wait for it to answer as Luna or any agent (manager.pending / manager.reply).",
+  access: "admin",
+  input: z.object({ mode: z.enum(["multi", "single"]), agent: z.string().trim().min(1).max(64).default("dev") }),
+  run: async (ctx, i) => {
+    if (i.mode === "single") {
+      const [a] = await db().select().from(agents).where(eq(agents.slug, i.agent));
+      if (!a) throw new OpError(404, `no agent a/${i.agent}`);
+      if (a.deletedAt) throw new OpError(404, `no agent a/${i.agent}`);
+      if (a.runtime === "internal" && !a.activeVersionId) throw new OpError(400, `a/${i.agent} has no deployed version`);
+    }
+    const value: AgentModeSettings = { mode: i.mode, agent: i.agent };
+    await setSetting(db(), SETTINGS.agentMode, value);
+    await audit(ctx, "settings.agent_mode", null, value);
+    return value;
   },
 });
 

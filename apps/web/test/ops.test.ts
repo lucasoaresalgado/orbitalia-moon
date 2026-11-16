@@ -15,6 +15,8 @@ const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => (statSy
 const NOT_CAPABILITIES = new Set([
   "login/+page.server.ts", "api/scope/+server.ts", "api/stream/+server.ts", "api/v1/stream/+server.ts",
   "api/v1/ops/+server.ts", "api/v1/ops/[name]/+server.ts", "api/v1/auth/token/+server.ts", "mcp/+server.ts", "cards/[project]/[number]/+page.server.ts",
+  // the playground's preview frame: static project files behind a signed link (no session, so no caller to run an operation as)
+  "preview/[token]/[slug]/[...path]/+server.ts",
 ]);
 
 describe("operations", () => {

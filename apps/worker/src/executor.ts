@@ -16,7 +16,7 @@ const HEARTBEAT_MS = 30_000;
 const WALL_TIME_MS = 30 * 60_000;
 const MAX_ATTEMPTS = 5;
 /** the run kinds this executor runs; briefs, reviews and reports are run by their pipeline job */
-const EXECUTED = ["agent", "manager", "test"];
+const EXECUTED = ["agent", "manager", "test", "qa"];
 
 
 export class Executor {

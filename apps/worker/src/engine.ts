@@ -8,7 +8,7 @@ import { runClaudeCode } from "./claudecode/runner.ts";
 import { callModel } from "./modelcall.ts";
 import type { Services } from "./services.ts";
 
-const ROLE_KEY: Record<string, keyof EngineSettings> = { manager: "manager", worker: "worker", reviewer: "reviewer", brief_writer: "brief_writer", minutes: "brief_writer" };
+const ROLE_KEY: Record<string, keyof EngineSettings> = { manager: "manager", worker: "worker", tester: "worker", reviewer: "reviewer", brief_writer: "brief_writer", minutes: "brief_writer" };
 
 export async function engineFor(s: Services, role: string): Promise<Engine> {
   const key = ROLE_KEY[role];

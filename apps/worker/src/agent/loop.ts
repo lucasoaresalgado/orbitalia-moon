@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { BudgetExceeded } from "../budgets.ts";
 import { executeClaudeCodeRun } from "../claudecode/run.ts";
 import { engineFor } from "../engine.ts";
-import { loadSkill, searchNotes } from "../knowledge.ts";
+import { allowedSkills, loadSkill, searchNotes } from "../knowledge.ts";
 import { callModel, Runaway } from "../modelcall.ts";
 import type { Services } from "../services.ts";
 import type { Workspaces, CardRef } from "../workspaces.ts";
@@ -39,13 +39,18 @@ export async function executeRun(s: Services, ws: Workspaces, run: RunRow, signa
   if (!version) return fail(s, run, "the run has no agent version");
   const [agentRow] = await s.d.db.select().from(agents).where(eq(agents.id, version.agentId));
   if (!agentRow) return fail(s, run, "agent missing");
+  if (agentRow.deletedAt) return fail(s, run, "the agent was deleted");
   const agent = agentRow;
   // the Claude subscription engine runs the whole task in Claude Code (claudecode/run.ts)
-  if (["agent", "manager", "test"].includes(run.kind) && (await engineFor(s, agent.role)) === "claude_code") return executeClaudeCodeRun(s, ws, run, signal);
+  if (["agent", "manager", "test", "qa"].includes(run.kind) && (await engineFor(s, agent.role)) === "claude_code") return executeClaudeCodeRun(s, ws, run, signal);
   const limits = AgentLimits.parse(version.limits);
   const perms = AgentPermissions.parse(version.permissions);
   const model = run.model ?? version.model;
   const allowed = new Map((version.tools as { name: string; requires_approval: boolean }[]).map((t) => [t.name, t]));
+  // skills attached to the agent come with the tool that loads them
+  const attachedSkills = (version.skills as string[] | null) ?? [];
+  if (attachedSkills.length && !allowed.has("load_skill")) allowed.set("load_skill", { name: "load_skill", requires_approval: false });
+  const usable = await allowedSkills(s, attachedSkills);
   const tools = s.registry.all().filter((t) => allowed.has(t.name));
 
   const [card] = run.cardId ? await s.d.db.select().from(cards).where(eq(cards.id, run.cardId)) : [];
@@ -102,7 +107,7 @@ export async function executeRun(s: Services, ws: Workspaces, run: RunRow, signa
       if (r.sha) await cardEvent(s.d, cardRef!.id, actor, "commit", { sha: r.sha, message: message.split("\n")[0], files: r.files });
       return r;
     } } : null,
-    skills: { load: (name) => loadSkill(s.config.skillsDir, name) },
+    skills: { load: (name, file) => (usable.has(name) ? loadSkill(s.config.skillsDir, name, { file, imported: usable.get(name)!.imported }) : Promise.resolve(null)) },
     notes: { search: (q, n) => searchNotes(s, projectId, q, n) },
     cortex: map
       ? { search: (q, n) => cortexSearch(s, map, q, n), read: (ref, o) => cortexRead(s, map, ref, o) }
@@ -110,10 +115,10 @@ export async function executeRun(s: Services, ws: Workspaces, run: RunRow, signa
     limbic: { remember: (text) => remember(s, agent.id, text), forget: (match) => forget(s, agent.id, match) },
   };
 
-  const system = await systemBlocks(s, { prompt: version.systemPrompt, tools: [...allowed.keys()], role: agent.role, project: project ?? null, card: card ?? null, limbic: limbicBlock(await getLimbic(s, agent.id)) });
+  const system = await systemBlocks(s, { prompt: version.systemPrompt, tools: [...allowed.keys()], role: agent.role, project: project ?? null, card: card ?? null, limbic: limbicBlock(await getLimbic(s, agent.id)), skills: attachedSkills });
   const specs = tools.map(specOf);
 
-  let cp: Checkpoint = (run.checkpoint as Checkpoint | null) ?? { messages: await initialMessages(s, run, project ?? null, card ?? null), turn: 0, pending: {} };
+  let cp: Checkpoint = (run.checkpoint as Checkpoint | null) ?? { messages: await initialMessages(s, run, project ?? null, card ?? null, chatAgentId(agent)), turn: 0, pending: {} };
   if (!cp.messages.length) return fail(s, run, "nothing to do: the conversation is empty");
   const save = () => s.d.db.update(runs).set({ checkpoint: cp, turn: cp.turn }).where(eq(runs.id, run.id));
 
@@ -125,7 +130,7 @@ export async function executeRun(s: Services, ws: Workspaces, run: RunRow, signa
     const last = cp.messages.at(-1)!;
     if (last.role === "assistant") {
       const calls = last.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
-      if (!calls.length) return succeed(s, run, cp, card?.id ?? null, actor);
+      if (!calls.length) return succeed(s, run, cp, card?.id ?? null, actor, chatAgentId(agent));
       const outcome = await runTools(calls);
       if (outcome !== "done") {
         await save();
@@ -135,7 +140,8 @@ export async function executeRun(s: Services, ws: Workspaces, run: RunRow, signa
     }
 
     // the user (or tool results) spoke last: call the model, with any note Lucas left meanwhile
-    if (card && cp.turn > 0) {
+    // Lucas's notes are for the card's worker, not for the tester
+    if (card && cp.turn > 0 && run.kind !== "qa") {
       const fresh = await takeNotes(s, card.id, run.id);
       if (fresh.length) {
         const lastMsg = cp.messages.at(-1)!;
@@ -304,10 +310,13 @@ function answerText(kind: string, status: string, response: unknown): string {
   return `${kind} ${status}`;
 }
 
-async function initialMessages(s: Services, run: RunRow, project: typeof projects.$inferSelect | null, card: typeof cards.$inferSelect | null): Promise<Message[]> {
+/** The chat thread an agent's manager-kind run answers in: Luna's is the null agent. */
+export const chatAgentId = (agent: { id: string; slug: string }) => (agent.slug === "luna" ? null : agent.id);
+
+async function initialMessages(s: Services, run: RunRow, project: typeof projects.$inferSelect | null, card: typeof cards.$inferSelect | null, chatAgent: string | null): Promise<Message[]> {
   const input = (run.input ?? {}) as { text?: string; feedback?: string };
-  if (run.kind === "manager") return managerHistory(s, run.projectId);
-  if (card && project) return [cardTask(project, card, input.feedback, await takeNotes(s, card.id, run.id))];
+  if (run.kind === "manager") return managerHistory(s, run.projectId, chatAgent);
+  if (card && project) return [cardTask(project, card, input.feedback, run.kind === "qa" ? [] : await takeNotes(s, card.id, run.id))];
   if (input.text) return [{ role: "user", content: [{ type: "text", text: input.text }] }];
   return [];
 }
@@ -342,13 +351,13 @@ async function compact(s: Services, run: RunRow, scope: CallScope, cp: Checkpoin
   };
 }
 
-async function succeed(s: Services, run: RunRow, cp: Checkpoint, cardId: string | null, actor: Actor): Promise<FinalStatus> {
+async function succeed(s: Services, run: RunRow, cp: Checkpoint, cardId: string | null, actor: Actor, chatAgent: string | null = null): Promise<FinalStatus> {
   const last = cp.messages.at(-1);
   const summary = last?.role === "assistant" ? textOf(last) : "";
   if (run.kind === "manager") {
     const [r] = await s.d.db.select({ cost: runs.costUsd, model: runs.model }).from(runs).where(eq(runs.id, run.id));
-    await s.d.db.insert(managerMessages).values({ projectId: run.projectId, role: "assistant", content: { text: summary }, runId: run.id, costUsd: r?.cost ?? 0, model: r?.model ?? null });
-    await publish(s.d.sql, { topic: "manager", type: "message", data: { projectId: run.projectId } });
+    await s.d.db.insert(managerMessages).values({ projectId: run.projectId, agentId: chatAgent, role: "assistant", content: { text: summary }, runId: run.id, costUsd: r?.cost ?? 0, model: r?.model ?? null });
+    await publish(s.d.sql, { topic: "manager", type: "message", data: { projectId: run.projectId, agentId: chatAgent } });
   }
   if (cardId && summary) await cardEvent(s.d, cardId, actor, "log", { message: summary.slice(0, 4000), final: true });
   return finish(s, run, "succeeded", { summary });

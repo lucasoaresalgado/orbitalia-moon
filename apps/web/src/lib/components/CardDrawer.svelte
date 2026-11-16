@@ -8,6 +8,7 @@
   import ModelBadge from "./ModelBadge.svelte";
   import BudgetBar from "./BudgetBar.svelte";
   import Markdown from "./Markdown.svelte";
+  import ReadMore from "./ReadMore.svelte";
   import { api } from "#lib/api.ts";
   import { live, throttle } from "#lib/stream.ts";
   import { usd, tokens, duration, between, time } from "#lib/format.ts";
@@ -64,7 +65,7 @@
     }
   }
   async function remove() {
-    if (!d || !confirm(`Delete p/${project.slug}#${d.card.number} "${d.card.title}"? Its runs stop and it leaves the board; its history stays in the audit log.`)) return;
+    if (!d || !confirm(`Delete p/${project.slug}#${d.card.number} "${d.card.title}"? Its runs stop and it leaves the board. It waits in the trash (Card archive), where you can restore it.`)) return;
     error = "";
     try {
       await api(`/api/cards/${cardId}`, { method: "DELETE" });
@@ -77,6 +78,9 @@
   }
   const criteria = $derived(((d?.card.acceptance_criteria ?? []) as (string | { text: string; met: boolean })[]).map((c) => (typeof c === "string" ? { text: c, met: false } : c)));
   const activeRun = $derived(d?.runs.find((r) => ["queued", "running", "waiting_approval", "waiting_input"].includes(r.status)));
+  // the tester's last verdict (events are newest first)
+  const lastTest = $derived(d?.events.find((e) => e.type === "test") as { payload: { verdict: string; report: string } } | undefined);
+  const testing = $derived(activeRun?.kind === "qa");
   const order = ["backlog", "ready", "in_progress", "checks", "in_review", "pr_open", "done"];
   const steps = $derived.by(() => {
     if (!d) return [];
@@ -86,7 +90,7 @@
     const list = [
       { label: routed ? `routed (${routed.engine.startsWith("systemone") ? "System One" : routed.engine}${routed.confidence != null ? `, ${Number(routed.confidence).toFixed(2)}` : ""})` : "routed", from: 2 },
       { label: activeRun?.status === "running" ? `working · turn ${activeRun.turn}` : "working", from: 2, active: 2 },
-      { label: "checks", from: 3, active: 3 },
+      { label: testing ? `testing · turn ${activeRun!.turn}` : lastTest ? `checks · tests ${lastTest.payload.verdict === "pass" ? "passed" : lastTest.payload.verdict === "fail" ? "failed" : "done"}` : "checks & tests", from: 3, active: 3 },
       { label: "review", from: 4, active: 4 },
       { label: d.card.repo_full_name && d.card.kind === "code" ? "PR" : "approved", from: 5, active: 5 },
       { label: d.card.repo_full_name && d.card.kind === "code" ? "merged" : "done", from: 6, active: 6 },
@@ -152,6 +156,10 @@
           {/each}
         </ol>
         <BudgetBar spent={Number(d.card.cost)} limit={budget} label="Card budget" />
+        {#if lastTest}
+          <div class="label mt-4 flex items-center gap-2">Tester's report <span class="rounded px-1 text-[10px] normal-case {lastTest.payload.verdict === 'pass' ? 'bg-ok/15 text-ok' : lastTest.payload.verdict === 'fail' ? 'bg-bad/15 text-bad' : 'bg-surface-3 text-muted'}">{lastTest.payload.verdict}</span></div>
+          <ReadMore lines={4}><div class="text-fg"><Markdown text={lastTest.payload.report || "_No report._"} /></div></ReadMore>
+        {/if}
         <div class="label mt-4">Brief</div>
         <Markdown text={d.card.brief ?? "_No brief yet._"} />
         <div class="label mt-4">Acceptance criteria</div>
@@ -174,6 +182,7 @@
                   {:else if e.type === "log" || e.type === "comment"}<div class="mt-0.5 line-clamp-6 whitespace-pre-wrap text-fg">{e.payload.message ?? e.payload.text}</div>
                   {:else if e.type === "commit"}<span class="mono text-muted"> {String(e.payload.sha).slice(0, 8)}</span> {e.payload.message}
                   {:else if e.type === "review"}<span class={e.payload.verdict === "approve" ? "text-ok" : "text-warn"}> {e.payload.verdict}</span><div class="text-fg">{e.payload.summary}</div>
+                  {:else if e.type === "test"}<span class={e.payload.verdict === "pass" ? "text-ok" : e.payload.verdict === "fail" ? "text-bad" : "text-muted"}> {e.payload.verdict}</span><div class="mt-0.5 line-clamp-6 whitespace-pre-wrap text-fg">{e.payload.report || e.payload.error || ""}</div>
                   {:else if e.type === "checks"}<span class={e.payload.passed ? "text-ok" : "text-bad"}> {e.payload.passed ? "passed" : "failed"}</span>
                   {:else if e.type === "decision"}<span class="text-muted"> {e.payload.type}: {JSON.stringify(e.payload.output)}</span>
                   {:else if e.type === "pr"}<a class="text-accent" href={e.payload.url} target="_blank" rel="noopener noreferrer"> #{e.payload.number ?? ""} {e.payload.merged ? "merged" : ""}</a>{/if}

@@ -87,8 +87,8 @@
 {#if data.pending}
   <p class="m-4 border-l-2 border-warn pl-2 text-warn">{data.pending}</p>
 {:else}
-  <div class="flex h-full min-h-0">
-    <aside class="flex w-64 shrink-0 flex-col border-r border-line">
+  <div class="flex h-full min-h-0 flex-col md:flex-row">
+    <aside class="flex max-h-56 w-full shrink-0 flex-col border-b border-line md:max-h-none md:w-64 md:border-r md:border-b-0">
       <div class="flex items-center gap-1 border-b border-line px-2 py-1.5">
         <span class="mono flex-1 truncate text-[11px] text-muted" title="the folder's current commit">{data.tree.head.slice(0, 8)}</span>
         <button class="btn" onclick={newFile} title="New file"><Plus size={13} /></button>
@@ -116,7 +116,7 @@
           {#if dirty}<span class="text-[12px] text-warn">unsaved</span>{/if}
           <span class="flex-1"></span>
           {#if !old}
-            <input class="input w-64" placeholder="Commit message (optional)" bind:value={message} aria-label="Commit message" />
+            <input class="input w-full sm:w-64" placeholder="Commit message (optional)" bind:value={message} aria-label="Commit message" />
             <button class="btn btn-primary" onclick={save} disabled={!dirty || busy}>Save</button>
             <button class="btn" onclick={rename} title="Move or rename"><Pencil size={13} /></button>
             <button class="btn btn-danger" onclick={() => remove(data.path!)} title="Delete"><Trash2 size={13} /></button>

@@ -5,13 +5,21 @@ import { env } from "node:process";
 import { act, call } from "#lib/server/ops/web.ts";
 import type { OpOutput } from "#lib/server/ops/types.ts";
 
-export const load = async ({ locals }) => ({
-  ...(await call<OpOutput<"settings.get">>(locals, "settings.get")),
-  tokens: await call<OpOutput<"tokens.list">>(locals, "tokens.list"),
-  variables: await call<OpOutput<"variables.list">>(locals, "variables.list", {}),
-  publicUrl: env.PUBLIC_URL ?? env.ORIGIN ?? "http://127.0.0.1:3000",
-  agentSlugs: (await call<OpOutput<"agents.list">>(locals, "agents.list")).map((a) => a.slug),
-});
+export const load = async ({ locals }) => {
+  const agents = await call<OpOutput<"agents.list">>(locals, "agents.list");
+  return {
+    ...(await call<OpOutput<"settings.get">>(locals, "settings.get")),
+    tokens: await call<OpOutput<"tokens.list">>(locals, "tokens.list"),
+    variables: await call<OpOutput<"variables.list">>(locals, "variables.list", {}),
+    publicUrl: env.PUBLIC_URL ?? env.ORIGIN ?? "http://127.0.0.1:3000",
+    agentSlugs: agents.map((a) => a.slug),
+    /** internal agents with a deployed version: the ones single-agent mode can pick */
+    soloChoices: agents.filter((a) => a.runtime === "internal" && a.version).map((a) => ({ slug: a.slug, name: a.name, role: a.role, model: a.model })),
+    /** external agents: identities a harness acts as (harness mode picks one) */
+    skills: await call<OpOutput<"skills.list">>(locals, "skills.list"),
+    harnessChoices: agents.filter((a) => a.runtime === "external").map((a) => ({ slug: a.slug, name: a.name })),
+  };
+};
 
 /** a number field: a missing or empty field leaves the value as it is (Number("") would be 0) */
 const num = (v: FormDataEntryValue | null, min = 0) => {
@@ -27,6 +35,29 @@ export const actions = {
     // the form sends every role: an empty one restores its default
     const input = Object.fromEntries(Object.keys(DEFAULT_MODELS).map((k) => [k, f[k] ?? ""]));
     return said("models")(await act(locals, "settings.models", input));
+  },
+  azure: async ({ request, locals }) => {
+    const f = await request.formData();
+    const input = {
+      endpoint: String(f.get("endpoint") || "https://ai.azure.com"),
+      deployment: String(f.get("deployment") || ""),
+      ...(f.get("apiVersion") ? { apiVersion: String(f.get("apiVersion")) } : {}),
+    };
+    return said("Azure Foundry")(await act(locals, "settings.azure", input));
+  },
+  agentMode: async ({ request, locals }) => {
+    const f = await request.formData();
+    const mode = f.get("mode") === "single" ? "single" : "multi";
+    let agent = String(f.get("agent") || "dev");
+    // harness mode with a new harness identity: create the external agent first
+    const fresh = String(f.get("newHarness") ?? "").trim().toLowerCase();
+    if (mode === "single" && agent === "__new") {
+      if (!fresh) return { error: "Give the harness a name (lowercase letters, digits and dashes)." };
+      const c = await act(locals, "agents.create", { slug: fresh, name: fresh, role: "worker", runtime: "external", description: "Your harness: it plays Luna and every agent in harness mode." });
+      if (!("ok" in c)) return c;
+      agent = fresh;
+    }
+    return said(mode === "single" ? `harness mode (a/${agent} does it all)` : "multi-agent mode")(await act(locals, "settings.agent_mode", { mode, agent }));
   },
   price: async ({ request, locals }) => {
     const f = await request.formData();

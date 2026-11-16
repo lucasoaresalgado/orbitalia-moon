@@ -91,7 +91,7 @@
   <section class="panel space-y-2 p-3">
     <div class="label">S3-compatible storage (AWS, MinIO…) — optional</div>
     <p class="text-[12px] text-muted">Scripts get AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_ENDPOINT_URL and MINIASYS_S3 (s3://bucket/prefix), and network access. The keys are secret variables of this project (Settings → Variables), named below.</p>
-    <div class="grid grid-cols-3 gap-2">
+    <div class="grid gap-2 sm:grid-cols-3">
       <input class="input" placeholder="endpoint (empty for AWS)" bind:value={s3.endpoint} aria-label="Endpoint" />
       <input class="input" placeholder="bucket" bind:value={s3.bucket} aria-label="Bucket" />
       <input class="input" placeholder="prefix (optional)" bind:value={s3.prefix} aria-label="Prefix" />
